@@ -17,7 +17,7 @@ exit /b 1
 "%NODE%" server.cjs %1 %2 %3 %4 %5
 exit /b %errorlevel%
 :test
-"%NODE%" --test test\workbench.test.cjs test\relay.test.cjs test\auto-review.test.cjs
+"%NODE%" --test test\workbench.test.cjs test\relay.test.cjs test\auto-review.test.cjs test\external-members.test.cjs
 exit /b %errorlevel%
 :smoke
 "%NODE%" test\smoke.cjs

@@ -37,6 +37,12 @@ function createServer(workbench, token = crypto.randomBytes(32).toString('hex'))
         const supplied = Buffer.from(auth), expected = Buffer.from('Bearer ' + token);
         if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return json(401, { error: '启动凭证无效，请用启动入口重新打开页面' });
         if (req.method === 'GET' && url.pathname === '/api/state') return json(200, workbench.snapshot());
+        if (req.method === 'GET' && url.pathname === '/api/members') return json(200, { members: workbench.external.list() });
+        const externalAction = url.pathname.match(/^\/api\/members\/(join|rejoin|leave|claim|heartbeat|report|release)$/);
+        if (req.method === 'POST' && externalAction) {
+          const input = await body(req), action = externalAction[1];
+          return json(200, action === 'join' ? workbench.external.register(input) : await workbench.external[action](input));
+        }
         if (req.method === 'GET' && url.pathname === '/api/workflows') return json(200, { workflows: workbench.state.workflows });
         const workflow = url.pathname.match(/^\/api\/workflows\/([\w-]+)\/(pause|resume|stop)$/);
         if (workflow && req.method === 'POST') return json(200, await workbench.relay.control(workflow[1], workflow[2]));
@@ -50,7 +56,7 @@ function createServer(workbench, token = crypto.randomBytes(32).toString('hex'))
         }
         // 聊天式发送：{projectId, message, threadId?, to?: auto|codex|claude|both, mode?}；自动选人、自动排队、自动接力
         if (req.method === 'POST' && url.pathname === '/api/chat') return json(201, workbench.chat(await body(req)));
-        if (req.method === 'GET' && url.pathname === '/api/connect-prompt') return json(200, { prompt: require('./bridge.cjs').connectPrompt(workbench.state.projects) });
+        if (req.method === 'GET' && url.pathname === '/api/connect-prompt') return json(200, { prompt: require('./bridge.cjs').connectPrompt(workbench.state.projects, url.searchParams.get('lang') || 'zh') });
         if (req.method === 'GET' && url.pathname === '/api/chat/messages') return json(200, workbench.chatMessages(Object.fromEntries(url.searchParams)));
         if (req.method === 'POST' && url.pathname === '/api/settings') return json(200, workbench.settings(await body(req)));
         const context = url.pathname.match(/^\/api\/projects\/([\w-]+)\/context$/);
@@ -84,7 +90,7 @@ function createServer(workbench, token = crypto.randomBytes(32).toString('hex'))
         if (req.method === 'POST' && url.pathname === '/api/shutdown') { json(200, { ok: true }); server.emit('shutdown'); return; }
         return json(404, { error: '接口不存在' });
       }
-      const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+      const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/i18n.js': ['i18n.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (req.method !== 'GET' || !files[url.pathname]) return json(404, { error: '页面不存在' });
       const [file, type] = files[url.pathname];
       res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); res.end(fs.readFileSync(path.join(__dirname, 'public', file)));

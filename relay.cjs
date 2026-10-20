@@ -57,6 +57,7 @@ class Relay {
           if (f) { f.status = 'blocked'; f.reasonCode = 'provider'; f.reason = t.error; }
           this.wb.save(); continue;
         }
+        if (this.wb.external.member(t.provider)) continue; // External clients claim queued tasks themselves.
         try { await this.wb.start(t.id); }
         catch (err) {
           t.status = 'blocked'; t.error = err.message;
@@ -119,12 +120,12 @@ class Relay {
     const f = this.flow(t.workflowId);
     const progress = this.members(f).slice(0, 30).map(x => `${x.provider}: ${x.title} [${x.status}]`).join('\n');
     return `自动接力任务组（无需用户逐步确认）：${f.title}\n总目标：${f.goal}\n整组进度：\n${progress}\n
-你可以直接给 Codex 或 Claude 发后续任务。需要对方检查/修复/补全时，结束回复的末尾必须给一个 workbench 代码块，例如：
+可用成员 ID：${this.wb.providerIds(t.projectId).map(id => id + "=" + this.wb.providerName(id)).join(", ")}。你可以给这些成员发后续任务。需要对方检查/修复/补全时，结束回复的末尾必须给一个 workbench 代码块，例如：
 \`\`\`workbench
 {"action":"handoff","provider":"${t.provider === 'codex' ? 'claude' : 'codex'}","title":"复核并继续","prompt":"具体检查、验收和需要修复的内容","mode":"review"}
 \`\`\`
 服务器会自动投递、等你退出后启动对方，沿用你的工作目录和未提交代码。接收方还可交回任务，不要要求用户再点开始，不要在本次进程中等待接收方完成。
-有命令工具时也可运行环境变量 WORKBENCH_NODE 指向的 Node，以 WORKBENCH_BRIDGE 为脚本：send --to codex|claude --title 标题 --prompt 具体任务 --mode edit|review。桥接使用本轮专属文件信箱，不需要网络或主控凭证。send 默认顺序交接；显式 --strategy parallel 才创建独立目录并行，不能用来接续未提交代码。先发送，再结束当前执行。
+有命令工具时也可运行环境变量 WORKBENCH_NODE 指向的 Node，以 WORKBENCH_BRIDGE 为脚本：send --to 同一项目成员ID --title 标题 --prompt 具体任务 --mode edit|review。桥接使用本轮专属文件信箱，不需要网络或主控凭证。send 默认顺序交接；显式 --strategy parallel 才创建独立目录并行，不能用来接续未提交代码。先发送，再结束当前执行。
 只读审查/没有命令工具时只需输出上述 workbench 块，同样自动投递。
 当前职责和验证确已完成时，末尾输出：
 \`\`\`workbench
@@ -163,7 +164,7 @@ class Relay {
       t.progress = validText(request.message, 2000); this.wb.log(t, 'system', t.progress); this.wb.save(); return { status: 'recorded' };
     }
     if (['send', 'handoff'].includes(request.action)) {
-      if (!['codex', 'claude'].includes(request.provider)) throw new Error('接收方必须是 codex 或 claude');
+      if (!this.wb.providerIds(t.projectId).includes(request.provider)) throw new Error('请选择同一项目的成员 ID / Select a member of the same project');
       const title = validText(request.title, 200), prompt = validText(request.prompt);
       const strategy = request.strategy || 'handoff';
       if (!['handoff', 'parallel'].includes(strategy)) throw new Error('无效的接力方式');
@@ -171,7 +172,7 @@ class Relay {
       const existing = channel.sent.find(s => s.fingerprint === fingerprint);
       if (existing) return { taskId: existing.id, status: 'queued', duplicate: true };
       if (this.members(f).length >= f.maxTasks) { f.status = 'blocked'; f.reasonCode = 'limit'; f.reason = '达到接力上限 ' + f.maxTasks + '，已停止继续互派'; this.wb.save(); throw new Error(f.reason); }
-      const target = this.wb.createTask({ projectId: t.projectId, workflowId: f.id, provider: request.provider, title, prompt, mode: request.mode, scope: t.scope, dependencies: strategy === 'handoff' ? [t.id] : [] });
+      const target = this.wb.createTask({ projectId: t.projectId, workflowId: f.id, provider: request.provider, title, prompt, language: t.language, mode: request.mode, scope: t.scope, dependencies: strategy === 'handoff' ? [t.id] : [] });
       target.sourceId = t.id; target.deliveryStrategy = strategy;
       if (strategy === 'handoff') { target.workspace = t.workspace; target.branch = t.branch; }
       target.sentBy = t.provider; target.senderTaskId = t.id;

@@ -10,7 +10,8 @@ if (location.hash.length > 1) { store.set('token', location.hash.slice(1)); hist
 const token = store.get('token') || '';
 const names = { todo: '待开始', queued: '自动排队', starting: '准备目录', running: '执行中', stopping: '停止中', stopped: '已停止', review: '待你验收', done: '已完成', failed: '执行失败', blocked: '需要处理', interrupted: '上次执行中断' };
 const flowNames = { running: '后台自动接力中', paused: '已暂停接力', blocked: '需要处理后继续', stopped: '整组已停止', completed: '整组任务全部完成' };
-const label = p => p === 'codex' ? 'Codex' : 'Claude';
+const label = p => esc(state?.providers[p]?.name || state?.externalMembers?.find(m => m.id === p)?.name || (p === 'codex' ? 'Codex' : p === 'claude' ? 'Claude' : p));
+const memberIds = () => Object.keys(state?.providers || {}).filter(k => !state.providers[k].projectId || state.providers[k].projectId === selectedProject);
 let state, selectedProject = store.get('selectedProject'), selectedTask = store.get('selectedTask'), handoffFrom, contextRevision, pollTimer, busy = false, polling = false, failures = 0;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function notify(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => $('#toast').hidden = true, 7000); }
@@ -60,10 +61,11 @@ function render() {
   $('#active-count').textContent = active.length; $('#completed-count').textContent = history.length;
   $('#view-active').setAttribute('aria-selected', taskView === 'active'); $('#view-completed').setAttribute('aria-selected', taskView === 'completed');
   const visible = (taskView === 'active' ? active : history).filter(t => t.title.toLowerCase().includes(searchQuery));
-  $('#project-title').textContent = p?.name || '一个工作台，两位搭档。';
+  $('#project-title').toggleAttribute('data-user-content', !!p); $('#project-path').toggleAttribute('data-user-content', !!p);
+  $('#project-title').textContent = p?.name || '一个工作台，协作不限两位。';
   $('#project-path').textContent = p ? p.path + '  ·  ' + p.baseRef : '添加本机 Git 仓库，开始手动分工。';
   $('#projects').innerHTML = state.projects.map(p => `<button class="project-item ${p.id === selectedProject ? 'selected' : ''}" data-project="${p.id}">▣ ${esc(p.name)}<small>${esc(p.baseRef)}</small></button>`).join('') || '<div class="hint">尚未添加项目</div>';
-  $('#agents').innerHTML = ['codex', 'claude'].map(k => { const x = state.providers[k]; return `<div class="agent-row" title="${esc(x.path)}"><b>${label(k)}</b><span class="${x.available ? 'available' : ''}">${x.available ? '● ' + (x.kind === 'api' ? 'API' : '已检测') : '○ 未找到 CLI'}</span></div>`; }).join('');
+  $('#agents').innerHTML = memberIds().map(k => { const x = state.providers[k]; return `<div class="agent-row" title="${esc(x.path)}"><b>${label(k)}</b><span class="${x.available ? 'available' : ''}">${x.kind === 'external' ? (x.online ? '● 在线' : '○ 离线') : x.available ? '● ' + (x.kind === 'api' ? 'API' : '已检测') : '○ 未找到 CLI'}</span></div>`; }).join('');
   $('#intro').hidden = !!p; $('#new-task').disabled = !p; $('#shared').disabled = !p;
   document.querySelector('.local-pill').innerHTML = '<i></i> 本地运行 · 自动接力' + (state.settings?.autoReview ? ' · 自动验收' : '');
   $('#revision').textContent = p ? 'v' + p.revision : '';
@@ -77,8 +79,8 @@ function render() {
   $('#board').innerHTML = p ? columns.map(([title, entries]) => `<div class="column"><div class="column-head">${title}<span>${entries.length}</span></div>${entries.map(card).join('') || '<div class="empty-column">暂无任务</div>'}</div>`).join('') : '';
   renderLatest();
   const activity = state.activity.filter(e => !e.taskId || tasks().some(t => t.id === e.taskId)).slice(0, 8);
-  $('#activity').innerHTML = activity.map(e => `<div class="activity-row"><time>${new Date(e.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time><span>${esc(e.message)}</span></div>`).join('') || '<div class="hint">分配第一项任务后，双方的进度会出现在这里。</div>';
-  renderChat(); renderDetail(); loadPreviews();
+  $('#activity').innerHTML = activity.map(e => `<div class="activity-row"><time>${new Date(e.at).toLocaleTimeString(window.i18n.lang === 'en' ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' })}</time><span>${esc(e.message)}</span></div>`).join('') || '<div class="hint">分配第一项任务后，双方的进度会出现在这里。</div>';
+  renderChat(); renderDetail(); loadPreviews(); window.i18n.apply();
 }
 // ---- 聊天：每个项目一个群（你 + Codex + Claude）和两个私信。AI 之间在群里直接对话、接力，你只看结果 ----
 let view = store.get('view') || 'chat', selectedChannel = store.get('selectedChannel') || 'group', threadQuery = '';
@@ -87,8 +89,8 @@ const liveText = new Map(), expanded = new Set();
 let showProcess = false;
 const running = t => ['starting', 'running', 'stopping'].includes(t.status);
 const touched = t => [t.finishedAt, t.startedAt, t.createdAt].filter(Boolean).sort().pop() || '';
-const CHANNELS = ['group', 'codex', 'claude'];
-const avatar = who => `<div class="avatar ${who}">${who === 'user' ? '我' : who === 'codex' ? 'Cx' : who === 'claude' ? 'Cl' : '群'}</div>`;
+const channels = () => ['group', ...memberIds()];
+const avatar = who => `<div class="avatar ${/^ext-/.test(who) ? 'external' : who}">${who === 'user' ? '我' : who === 'codex' ? 'Cx' : who === 'claude' ? 'Cl' : who === 'group' ? '群' : label(who).slice(0,2)}</div>`;
 function stripReport(s) { return String(s || '').replace(/```workbench\s*\n[\s\S]*?\n```/g, '').trim(); }
 function report(s) { const m = [...String(s || '').matchAll(/```workbench\s*\n([\s\S]*?)\n```/g)]; try { return m.length === 1 ? JSON.parse(m[0][1]) : null; } catch { return null; } }
 // 极简 Markdown：代码块、行内代码、粗体、链接；先转义再替换，不执行任何 HTML
@@ -115,13 +117,14 @@ function events(list) {
 }
 function preview(ch) {
   const ev = events(channelTasks(ch)), last = ev[ev.length - 1];
-  if (!last) return { text: ch === 'group' ? '在这里给两位 AI 派活，它们会自己商量' : '私下聊，不打扰群里', at: '' };
+  if (!last) return { text: ch === 'group' ? '在这里给成员派活，它们会协作处理' : '私下聊，不打扰群里', at: '' };
   const who = last.from === 'user' ? '我' : label(last.from), text = last.kind === 'reply' ? stripReport(last.t.result) || last.t.error || '（无文字回复）' : last.t.prompt;
   return { text: who + '：' + text.replace(/\s+/g, ' ').slice(0, 40), at: last.at };
 }
 function memberState(k) {
   const x = state.providers[k];
-  if (!x.available) return ['off', '未连接'];
+  if (!x?.available) return ['off', '未连接'];
+  if (x.kind === 'external' && !x.online) return ['off', '离线 · 等待领取任务'];
   const busy = state.tasks.find(t => t.provider === k && running(t)), queued = state.tasks.find(t => t.provider === k && t.status === 'queued');
   if (busy) return ['busy', '在忙：' + busy.title];
   if (queued) return ['busy', '排队：' + queued.title];
@@ -129,7 +132,7 @@ function memberState(k) {
 }
 function bubble(e, prev) {
   const t = e.t, mine = e.from === 'user', grouped = prev && prev.from === e.from && new Date(e.at) - new Date(prev.at) < 5 * 60000;
-  const when = new Date(e.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  const when = new Date(e.at).toLocaleTimeString(window.i18n.lang === 'en' ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' });
   let body, cls = '', tools = '';
   if (e.kind === 'ask') {
     body = (selectedChannel === 'group' ? `<span class="at">@${e.both ? '大家' : label(t.provider)}</span> ` : '') + md(t.prompt) + (t.mode === 'review' ? ' <span class="tag">只读</span>' : '');
@@ -158,7 +161,7 @@ function bubble(e, prev) {
 function messagesHtml(list) {
   const ev = events(list); let prev = null, html = '';
   for (const e of ev) {
-    if (!prev || new Date(e.at) - new Date(prev.at) > 15 * 60000) html += `<div class="sep">${new Date(e.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>`;
+    if (!prev || new Date(e.at) - new Date(prev.at) > 15 * 60000) html += `<div class="sep">${new Date(e.at).toLocaleString(window.i18n.lang === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>`;
     html += bubble(e, prev); prev = e;
   }
   return html;
@@ -170,20 +173,20 @@ function renderChat() {
   $('#new-task').hidden = chat;
   $('#view-chat').setAttribute('aria-selected', view === 'chat'); $('#view-board').setAttribute('aria-selected', view === 'board');
   if (!chat) return;
-  if (!CHANNELS.includes(selectedChannel)) selectedChannel = 'group';
+  if (!channels().includes(selectedChannel)) selectedChannel = 'group';
   const seenKey = ch => selectedProject + ':' + ch;
   const list = channelTasks(selectedChannel), ev = events(list), latest = ev.length ? ev[ev.length - 1].at : '';
   if (latest) { channelSeen[seenKey(selectedChannel)] = latest; store.set('channelSeen', JSON.stringify(channelSeen)); }
   // 频道列表
-  const chHtml = CHANNELS.map(ch => {
+  const chHtml = channels().map(ch => {
     const pv = preview(ch), unread = pv.at && pv.at > (channelSeen[seenKey(ch)] || ''), st = ch === 'group' ? null : memberState(ch);
     const busy = channelTasks(ch).some(t => running(t) || t.status === 'queued');
-    return `<button class="channel ${ch === selectedChannel ? 'selected' : ''}" data-channel="${ch}">${avatar(ch === 'group' ? 'group' : ch)}<span class="ch-main"><span class="ch-name">${ch === 'group' ? esc(p.name) + ' 群' : label(ch)}${st ? `<i class="st ${st[0]}"></i>` : ''}</span><span class="ch-last">${busy ? '<em>正在输入…</em>' : esc(pv.text)}</span></span><span class="ch-side">${pv.at ? new Date(pv.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}${unread ? '<b class="badge">●</b>' : ''}</span></button>`;
+    return `<button class="channel ${ch === selectedChannel ? 'selected' : ''}" data-channel="${ch}">${avatar(ch === 'group' ? 'group' : ch)}<span class="ch-main"><span class="ch-name">${ch === 'group' ? esc(p.name) + ' 群' : label(ch)}${st ? `<i class="st ${st[0]}"></i>` : ''}</span><span class="ch-last">${busy ? '<em>正在输入…</em>' : esc(pv.text)}</span></span><span class="ch-side">${pv.at ? new Date(pv.at).toLocaleTimeString(window.i18n.lang === 'en' ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}${unread ? '<b class="badge">●</b>' : ''}</span></button>`;
   }).join('');
   if ($('#channel-list').dataset.html !== chHtml) { $('#channel-list').innerHTML = chHtml; $('#channel-list').dataset.html = chHtml; }
   // 标题
-  $('#room-title').textContent = selectedChannel === 'group' ? p.name + ' 群（3）' : '和 ' + label(selectedChannel) + ' 私聊';
-  $('#room-sub').textContent = selectedChannel === 'group' ? '你、Codex、Claude · 同一个代码目录' : memberState(selectedChannel)[1];
+  $('#room-title').textContent = selectedChannel === 'group' ? p.name + ' 群（' + (memberIds().length + 1) + '）' : '和 ' + label(selectedChannel) + ' 私聊';
+  $('#room-sub').textContent = selectedChannel === 'group' ? '你、' + memberIds().map(k => state.providers[k].name || k).join('、') + ' · 同一个代码目录' : memberState(selectedChannel)[1];
   const f = channelFlow(selectedChannel), live = list.filter(t => running(t) || t.status === 'queued');
   $('#room-actions').innerHTML = live.length && f ? `<button data-flow-ctl="stop" title="停止这个频道里正在做和排队的事">停止</button>` : '';
   // 消息
@@ -202,12 +205,16 @@ function renderChat() {
   if ($('#typing').dataset.html !== typingHtml) { $('#typing').innerHTML = typingHtml; $('#typing').dataset.html = typingHtml; }
   // 输入框
   $('#mention-bar').hidden = selectedChannel !== 'group';
+  const target = $('#composer').elements.to, oldTarget = target.value;
+  const targets = '<option value="auto">自动选择</option><option value="all">所有成员</option>' + memberIds().map(k => `<option data-user-content value="${k}">${label(k)}</option>`).join('');
+  if (target.dataset.html !== targets) { target.innerHTML = targets; target.dataset.html = targets; if ([...target.options].some(o => o.value === oldTarget)) target.value = oldTarget; }
   $('#composer').elements.message.placeholder = selectedChannel === 'group' ? '发到群里… Enter 发送，Shift+Enter 换行' : '私信 ' + label(selectedChannel) + '… Enter 发送';
   // 成员与群公告
-  const members = `<div class="member">${avatar('user')}<span><b>我</b><small>群主</small></span></div>` + ['codex', 'claude'].map(k => { const [s, text] = memberState(k); return `<button class="member" data-channel="${k}" title="私聊 ${label(k)}">${avatar(k)}<span><b>${label(k)}<i class="st ${s}"></i></b><small>${esc(text)}</small></span></button>`; }).join('');
+  const members = `<div class="member">${avatar('user')}<span><b data-ui>我</b><small>群主</small></span></div>` + memberIds().map(k => { const [s, text] = memberState(k); return `<button class="member" data-channel="${k}" title="私聊 ${label(k)}">${avatar(k)}<span><b>${label(k)}<i class="st ${s}"></i></b><small>${esc(text)}</small></span></button>`; }).join('');
   if ($('#member-list').dataset.html !== members) { $('#member-list').innerHTML = members; $('#member-list').dataset.html = members; }
   const notice = [p.context, p.contracts].filter(Boolean).join('\n\n');
-  $('#notice').textContent = notice ? (notice.length > 220 ? notice.slice(0, 220) + '…' : notice) : '还没有群公告。写下目标、规则和接口约定，两位 AI 每次都会看到。';
+  $('#notice').toggleAttribute('data-user-content', !!notice);
+  $('#notice').textContent = notice ? (notice.length > 220 ? notice.slice(0, 220) + '…' : notice) : '还没有群公告。写下目标、规则和接口约定，各位成员每次都会看到。';
 }
 async function refreshLive() {
   if (view !== 'chat' || !showProcess || !state) return;
@@ -226,7 +233,7 @@ $('#member-list').addEventListener('click', e => { const el = e.target.closest('
 $('#edit-notice').onclick = () => $('#shared').click();
 $('#connect-ai').onclick = $('#setup-ai').onclick = async () => {
   try {
-    const { prompt } = await api('connect-prompt');
+    const { prompt } = await api('connect-prompt?lang=' + window.i18n.lang);
     try { await navigator.clipboard.writeText(prompt); notify('已复制接入提示词，粘贴给其他 AI 即可'); }
     catch { $('#prompt-content').textContent = prompt; openDialog('#prompt-dialog'); } // 剪贴板不可用时直接展示，手动复制
   } catch (err) { notify(err.message); }
@@ -242,7 +249,7 @@ $('#composer').addEventListener('submit', async e => {
   e.preventDefault(); const form = e.target, message = form.elements.message.value.trim();
   if (!message || busy || !project()) return; busy = true; $('#send').disabled = true;
   try {
-    const res = await api('chat', 'POST', { projectId: selectedProject, channel: selectedChannel, message, mode: form.elements.review.checked ? 'review' : 'edit' });
+    const res = await api('chat', 'POST', { projectId: selectedProject, channel: selectedChannel, message, mode: form.elements.review.checked ? 'review' : 'edit', to: form.elements.to.value, language: window.i18n.lang });
     form.elements.message.value = '';
     const failed = res.tasks.filter(t => t.status === 'failed'); if (failed.length) notify(failed.map(t => label(t.provider) + '：' + t.error).join('；'));
     await refresh(); $('#messages').scrollTop = $('#messages').scrollHeight;
@@ -254,7 +261,7 @@ document.querySelector('#chat-view').addEventListener('click', async e => {
   if (e.target.closest('[data-process]')) { showProcess = !showProcess; render(); refreshLive().catch(() => {}); return; }
   const d = e.target.closest('[data-detail]'); if (d) { selectTask(d.dataset.detail); render(); refreshLogs().catch(err => notify(err.message)); return; }
   const b = e.target.closest('[data-diff],[data-retry],[data-halt],[data-flow-ctl]'); if (!b) return;
-  if (b.dataset.flowCtl && !confirm('停止这个频道里正在做和排队的事？')) return;
+  if (b.dataset.flowCtl && !confirm(window.i18n.t('停止这个频道里正在做和排队的事？'))) return;
   b.disabled = true;
   try {
     if (b.dataset.diff) { const slot = document.querySelector(`[data-diff-slot="${b.dataset.diff}"]`); if (slot.innerHTML) { slot.innerHTML = ''; return; } const data = await api(`tasks/${b.dataset.diff}/diff`); slot.innerHTML = '<pre class="terminal">' + esc((data.status + '\n\n' + data.diff).trim() || '暂无改动') + '</pre>'; }
@@ -271,10 +278,10 @@ function renderLatest() {
   const fresh = state.activity.filter(e => e.at > lastSeen);
   $('#latest-count').textContent = fresh.length ? fresh.length + ' 条新消息' : '';
   $('#latest-read').hidden = !fresh.length;
-  document.title = (fresh.length ? `(${fresh.length}) ` : '') + '同席 · 本地双 AI 工作台';
+  document.title = (fresh.length ? `(${fresh.length}) ` : '') + '同席 · 本地 AI 协作工作台';
   $('#latest').innerHTML = rows.map(e => {
     const t = e.taskId && byTask.get(e.taskId), p = t && byProject.get(t.projectId);
-    const when = new Date(e.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const when = new Date(e.at).toLocaleString(window.i18n.lang === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     return `<div class="latest-row ${e.at > lastSeen ? 'new' : ''}" ${t ? `data-open="${t.id}" title="打开这项任务"` : ''}><time>${when}</time>${t ? `<span class="who">${label(t.provider)} · ${names[t.status] || esc(t.status)}</span>` : ''}<span>${esc(e.message)}</span>${p && state.projects.length > 1 ? `<span class="proj">${esc(p.name)}</span>` : ''}</div>`;
   }).join('') || '<div class="hint">还没有消息。分配任务后，AI 之间的派发、执行和完成都会出现在这里。</div>';
   // 新到的 AI 派发 / 完成 / 需要处理，弹一条提示（第一次加载不弹）
@@ -309,7 +316,7 @@ function renderDetail() {
   if ($('#detail').dataset.signature === signature) return;
   const oldLog = $('#task-log')?.textContent;
   $('#detail').dataset.signature = signature;
-  $('#detail').innerHTML = `<div class="dialog-head"><span class="provider ${t.provider}">${label(t.provider)}</span>${t.backend ? `<span class="backend">${t.backend === 'api' ? 'Anthropic API' : 'CLI'}</span>` : ''}<button data-action="close">×</button></div><h2>${esc(t.title)}</h2><div class="detail-info">${names[t.status] || esc(t.status)} · ${t.mode === 'review' ? '只读审查' : '实现与修改'}<br>${esc(t.branch || '执行时创建独立分支 ai/' + t.provider + '/…')}<br>${esc(t.workspace || '')}</div><div class="detail-actions">${controls.join('')}</div>${t.error ? `<p class="error">${esc(t.error)}</p>` : ''}${deliverables(t)}<div class="detail-section">任务要求</div><div class="detail-text">${esc(t.prompt)}</div>${t.dependencies.length ? `<div class="detail-section">前置任务</div><div class="detail-text">${t.dependencies.map(id => { const d = state.tasks.find(t => t.id === id); return esc(d?.title) + ' · ' + (names[d?.status] || ''); }).join('<br>')}</div>` : ''}${t.result ? `<div class="detail-section">交付结果</div><div class="result">${esc(t.result)}</div>` : ''}<div class="detail-section">实时执行记录 <span>${t.runs ? '第 ' + t.runs + ' 次' : ''}</span></div><pre id="task-log" class="terminal">${esc(oldLog || '尚未开始执行。')}</pre><div id="diff-content"></div>`;
+  $('#detail').innerHTML = `<div class="dialog-head"><span class="provider ${t.provider}">${label(t.provider)}</span>${t.backend ? `<span class="backend">${t.backend === 'api' ? 'Anthropic API' : t.backend === 'external' ? 'External AI' : 'CLI'}</span>` : ''}<button data-action="close">×</button></div><h2>${esc(t.title)}</h2><div class="detail-info">${names[t.status] || esc(t.status)} · ${t.mode === 'review' ? '只读审查' : '实现与修改'}<br>${esc(t.branch || '执行时创建独立分支 ai/' + t.provider + '/…')}<br>${esc(t.workspace || '')}</div><div class="detail-actions">${controls.join('')}</div>${t.error ? `<p class="error">${esc(t.error)}</p>` : ''}${deliverables(t)}<div class="detail-section">任务要求</div><div class="detail-text">${esc(t.prompt)}</div>${t.dependencies.length ? `<div class="detail-section">前置任务</div><div class="detail-text">${t.dependencies.map(id => { const d = state.tasks.find(t => t.id === id); return esc(d?.title) + ' · ' + (names[d?.status] || ''); }).join('<br>')}</div>` : ''}${t.result ? `<div class="detail-section">交付结果</div><div class="result">${esc(t.result)}</div>` : ''}<div class="detail-section">实时执行记录 <span>${t.runs ? '第 ' + t.runs + ' 次' : ''}</span></div><pre id="task-log" class="terminal">${esc(oldLog || '尚未开始执行。')}</pre><div id="diff-content"></div>`;
 }
 function humanLog(row) {
   if (row.stream === 'system') return '— ' + row.text;
@@ -362,6 +369,7 @@ $('#new-task').onclick = () => taskDialog();
 function taskDialog(source) {
   handoffFrom = source; const form = $('#task-form'); form.reset();
   $('#task-heading').textContent = source ? '交接给另一方' : '分配任务';
+  form.elements.provider.innerHTML = memberIds().map(k => `<option data-user-content value="${k}">${label(k)}</option>`).join('') + '<option value="both">Codex + Claude</option>';
   form.elements.provider.querySelector('[value=both]').disabled = !!source;
   if (source) { form.elements.title.value = '复核 · ' + source.title; form.elements.provider.value = source.provider === 'codex' ? 'claude' : 'codex'; form.elements.mode.value = 'review'; form.elements.scope.value = source.scope; form.elements.prompt.value = '检查上一任务的实现和验证结果，指出具体问题与未完成项。'; }
   form.elements.dependencies.innerHTML = tasks().map(t => `<option value="${t.id}">${esc(t.title)} · ${names[t.status]}</option>`).join('');
@@ -385,7 +393,7 @@ submit('#project-form', async fd => { const p = await api('projects', 'POST', Ob
 submit('#context-form', fd => api(`projects/${selectedProject}/context`, 'PUT', { ...Object.fromEntries(fd), revision: contextRevision }));
 submit('#settings-form', fd => api('settings', 'POST', { codex: fd.get('codex'), claude: fd.get('claude'), godot: fd.get('godot'), autoReview: fd.get('autoReview') === '1' }));
 submit('#task-form', async fd => {
-  const data = { ...Object.fromEntries(fd), dependencies: fd.getAll('dependencies'), projectId: selectedProject, autoStart: fd.get('autoStart') === '1', autoContinue: fd.get('autoContinue') === '1', maxTasks: Number(fd.get('maxTasks')) };
+  const data = { ...Object.fromEntries(fd), dependencies: fd.getAll('dependencies'), projectId: selectedProject, language: window.i18n.lang, autoStart: fd.get('autoStart') === '1', autoContinue: fd.get('autoContinue') === '1', maxTasks: Number(fd.get('maxTasks')) };
   if (handoffFrom) {
     const t = await api(`tasks/${handoffFrom.id}/handoff`, 'POST', data); selectTask(t.id);
   } else {
@@ -413,6 +421,6 @@ $('#detail').addEventListener('click', async e => {
     else { await api(`tasks/${t.id}/${action}`, 'POST'); await refresh(); }
   } catch (err) { notify(err.message); await refresh(); } finally { button.disabled = false; }
 });
-$('#shutdown').onclick = async () => { if (confirm('退出工作台并停止正在执行的任务？')) { try { await api('shutdown', 'POST'); stopPolling(); document.body.textContent = '工作台已退出。下次双击启动入口即可继续。'; } catch (e) { notify(e.message); } } };
+$('#shutdown').onclick = async () => { if (confirm(window.i18n.t('退出工作台并停止正在执行的任务？'))) { try { await api('shutdown', 'POST'); stopPolling(); document.body.textContent = '工作台已退出。下次双击启动入口即可继续。'; } catch (e) { notify(e.message); } } };
 if (!token) { $('#offline').textContent = '缺少本机启动凭证：请双击“启动本地协作台”或打开启动时输出的完整地址。'; $('#offline').hidden = false; }
 else refresh();

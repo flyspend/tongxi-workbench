@@ -20,8 +20,28 @@ function message(action, o) {
   throw new Error('支持 send / handoff / complete / block / progress；工作台外还可用 projects / status / say / read / prompt');
 }
 // 给外部 AI 的接入说明：路径和项目都已填好，整段复制给任何能运行命令的 AI 即可
-function connectPrompt(projects) {
+function connectPrompt(projects, lang = 'zh') {
+  if (!['zh', 'en'].includes(lang)) throw new Error('lang must be zh or en');
   const run = `${process.platform === 'win32' ? '& ' : ''}"${process.execPath}" "${path.join(__dirname, 'bridge.cjs')}"`;
+  if (lang === 'en') return [
+    'Connect to Tongxi, a local workbench. Any AI with local terminal access can use this bridge; Codex and Claude are currently the built-in task executors.',
+    `First run ${run} projects and ${run} status. Report a successful connection and wait for the user’s task; connecting must not create a test task or call a model.`,
+    `If the service is offline, read ${path.join(__dirname, 'AI-START-HERE.en.md')} and help start it.`,
+    `Add only a Git project chosen by the user: ${run} add-project --path "absolute repository path". Reuse existing projects.`,
+    `Projects: ${projects.map(p => `${p.name} (${p.id})`).join(', ') || 'none; ask the user which Git repository to add'}`,
+    'Commands (PowerShell on Windows; JSON output):',
+    `${run} say --project "project name or ID" --message "goal and acceptance criteria" --wait 600`,
+    'Use --to MEMBER_ID|codex|claude|both|all, --channel group|MEMBER_ID|codex|claude, --readonly 1, or --message-file "path" as needed.',
+    `${run} read --project "project name or ID" --after "last timestamp" --wait 120`,
+    'If done:false, continue with read instead of resending. kind=handoff is an internal handoff; kind=reply is an executor reply. Report blocked/failed states accurately.',
+    `Join as your own member: ${run} join --project "project ID" --name "YourAIName". Save the returned memberId; reuse it if already registered. ${run} members lists member IDs.`,
+    `Receive work: ${run} claim --member MEMBER_ID --wait 30. A null job means no task. For a job, follow its prompt, mode and workspace. Keep polling only while authorized to receive work; registering does not keep a closed AI session running.`,
+    `During work: ${run} heartbeat --member MEMBER_ID --task TASK_ID --message "progress". Renew at least every 10 minutes; leases expire after 30 minutes. If stopRequested:true, stop and report --status stopped.`,
+    `Write a UTF-8 result file, then ${run} report --member MEMBER_ID --task TASK_ID --result-file "absolute file path" --status complete --validation "actual checks and results". Use blocked/failed with the concrete reason when needed.`,
+    `Read ${path.join(__dirname, 'EXTERNAL-AI.en.md')} for handoffs and recovery. If a lease is lost, stop work and confirm the worker stopped before releasing its workspace.`,
+    'The bridge reads local credentials itself. Keep .local files and CLI credentials private; the user completes official login and configures their own API keys locally.',
+    'The workbench does not automatically push, merge or deploy. CLI permissions still apply; --readonly is a requested review mode, not a universal process sandbox.',
+  ].join('\n\n');
   return [
     '你可以通过本机的「同席」工作台把工作交给 Codex 和 Claude，它们在群里自己分工、互相复核，你只需要发消息和看回复。',
     '',
@@ -33,8 +53,8 @@ function connectPrompt(projects) {
     '',
     '常用命令（在终端运行，输出都是 JSON）：',
     `- 发到群里并等回复（最多等 10 分钟）：${run} say --project 项目名 --message "要做的事" --wait 600`,
-    `- 指定某一位：在消息里写 @Codex / @Claude / @大家，或加 --to codex|claude|both`,
-    `- 私信某一位：加 --channel codex 或 --channel claude`,
+    `- 指定某一位：在消息里写 @Codex / @Claude / @大家，或加 --to 成员ID|codex|claude|both|all`,
+    `- 私信某一位：加 --channel 成员ID（或 codex / claude）`,
     `- 只读（不改代码）：加 --readonly 1`,
     `- 查看最近消息：${run} read --project 项目名 [--after 上次的时间] [--wait 秒数]`,
     `- 长消息：先写进文件，再用 --message-file 文件路径`,
@@ -45,11 +65,17 @@ function connectPrompt(projects) {
     '- 回复里 kind=handoff 是 AI 之间的交接，kind=reply 是某位 AI 的回复；status 为 blocked/failed 时把原因告诉用户或回一句怎么处理。',
     '- 工作台只接受本机请求，凭证由桥接脚本自动读取，不要打印或外传 .local 目录里的任何文件。',
     '- 登录由用户在官方 CLI 中完成；API Key 由用户在本机配置，不要让用户把密钥、密码或验证码粘贴到聊天里。',
+    `- 作为独立成员加入：${run} join --project 项目ID --name 你的AI名称，保存返回的 memberId。已有身份时复用原 ID；${run} members 可查看成员。`,
+    `- 接收任务：${run} claim --member 成员ID --wait 30。job:null 表示暂无任务；有任务时只在返回的 workspace 工作，并遵守 prompt 和 mode。只有用户要求持续接收时才继续轮询，注册不会让已关闭的 AI 自动运行。`,
+    `- 执行期间至少每 10 分钟、长工具调用前后运行 ${run} heartbeat --member 成员ID --task 任务ID --message 当前进度。租约 30 分钟无续期则失效；stopRequested:true 时停工并 report --status stopped。`,
+    `- 将结果写入 UTF-8 文件，再 ${run} report --member 成员ID --task 任务ID --result-file 报告绝对路径 --status complete --validation 实际验证。未完成则用 blocked / failed，并写明原因。`,
+    `- 交接和失联恢复见 ${path.join(__dirname, 'EXTERNAL-AI.md')}；租约丢失后先停工，确认执行已停止才释放目录。`,
   ].join('\n');
 }
 async function main(argv = process.argv.slice(2)) {
   const { action, options: o } = argumentsFor(argv);
-  if (action === 'setup-prompt' && !process.env.WORKBENCH_AGENT_MAILBOX) return fs.readFileSync(path.join(__dirname, 'AI-START-HERE.md'), 'utf8');
+  if (['prompt', 'setup-prompt'].includes(action) && o.lang && !['zh', 'en'].includes(o.lang)) throw new Error('lang must be zh or en');
+  if (action === 'setup-prompt' && !process.env.WORKBENCH_AGENT_MAILBOX) return fs.readFileSync(path.join(__dirname, o.lang === 'en' ? 'AI-START-HERE.en.md' : 'AI-START-HERE.md'), 'utf8');
   const mailbox = process.env.WORKBENCH_AGENT_MAILBOX;
   if (mailbox) {
     if (o.project || o.workflow) throw new Error('代理只能给当前任务组派发后续任务');
@@ -91,6 +117,41 @@ async function main(argv = process.argv.slice(2)) {
     const p = list.find(x => x.id === o.project) || list.filter(x => x.name === o.project).at(0);
     if (!p) throw new Error('找不到项目：' + o.project); return p;
   };
+  if (action === 'members') return api('members');
+  const memberDir = path.join(path.dirname(file), 'members');
+  const memberFile = id => {
+    if (!/^ext-[0-9a-f-]{36}$/.test(id || '')) throw new Error('请用 --member 指定成员 ID / Provide --member ID');
+    return path.join(memberDir, id + '.json');
+  };
+  const saveMember = value => { fs.mkdirSync(memberDir, { recursive: true }); fs.writeFileSync(memberFile(value.id), JSON.stringify(value), { mode: 0o600 }); };
+  if (['leave', 'join'].includes(action) && o.member) {
+    const m = JSON.parse(fs.readFileSync(memberFile(o.member), 'utf8'));
+    return api('members/' + (action === 'join' ? 'rejoin' : 'leave'), { memberId: m.id, key: m.key });
+  }
+  if (action === 'join') {
+    const p = await projectOf(), m = await api('members/join', { projectId: p.id, name: o.name });
+    saveMember(m); return { memberId: m.id, name: m.name, projectId: m.projectId, next: `claim --member ${m.id} --wait 30` };
+  }
+  if (['claim','heartbeat','report','release'].includes(action)) {
+    const m = JSON.parse(fs.readFileSync(memberFile(o.member), 'utf8'));
+    const credentials = { memberId: m.id, key: m.key };
+    if (action === 'claim') {
+      const seconds = o.wait === undefined ? 0 : Number(o.wait);
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 30) throw new Error('--wait must be 0–30 seconds');
+      const until = Date.now() + seconds * 1000;
+      do {
+        const value = await api('members/claim', credentials);
+        if (value.job) { m.leases ||= {}; m.leases[value.job.taskId] = value.lease; saveMember(m); return { job: value.job }; }
+        if (Date.now() >= until) return { job: null, note: 'No task; poll again when ready.' };
+        await new Promise(r => setTimeout(r, 1000));
+      } while (true);
+    }
+    if (action === 'release') return api('members/release', { ...credentials, taskId: o.task, confirmStopped: o['confirm-stopped'] === '1' });
+    const data = { ...credentials, taskId: o.task, lease: m.leases?.[o.task] };
+    if (action === 'heartbeat') return api('members/heartbeat', { ...data, message: o.message });
+    if (!o['result-file']) throw new Error('请用 --result-file 提供报告文件 / Provide --result-file');
+    return api('members/report', { ...data, status: o.status || 'complete', result: fs.readFileSync(o['result-file'], 'utf8'), validation: o.validation ? [o.validation] : [] });
+  }
   const readMessages = (p, after) => api(`chat/messages?projectId=${encodeURIComponent(p.id)}&channel=${encodeURIComponent(o.channel || 'group')}&limit=${encodeURIComponent(o.limit || 30)}${after ? '&after=' + encodeURIComponent(after) : ''}`);
   // 等到频道里没人在忙、且出现了新回复（或超时），返回这期间的消息
   const waitReplies = async (p, after, seconds) => {
@@ -110,7 +171,7 @@ async function main(argv = process.argv.slice(2)) {
     return o.wait ? waitReplies(p, since, Number(o.wait)) : { ok: true, project: p.name, channel: o.channel || 'group', queued: sent.tasks.map(t => ({ to: t.provider, status: t.status })), since };
   }
   if (action === 'read') { const p = await projectOf(); return o.wait ? waitReplies(p, o.after, Number(o.wait)) : readMessages(p, o.after); }
-  if (action === 'prompt') return connectPrompt((await state()).projects);
+  if (action === 'prompt') return connectPrompt((await state()).projects, o.lang || 'zh');
   if (action === 'status') { const s = await api('state'); return { workflows: s.workflows.filter(f => !o.workflow || f.id === o.workflow), tasks: s.tasks.filter(t => (!o.workflow || t.workflowId === o.workflow) && (!o.project || t.projectId === o.project)).map(t => ({ id: t.id, title: t.title, provider: t.provider, status: t.status, error: t.error, workflowId: t.workflowId })) }; }
   if (!['send', 'handoff'].includes(action)) throw new Error('complete / block / progress 只能由正在执行的任务发送');
   return api('tasks', { ...message(action, o), projectId: o.project, workflowId: o.workflow, autoContinue: true, autoStart: true });

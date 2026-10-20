@@ -138,8 +138,9 @@ class Workbench {
     fs.mkdirSync(this.dir, { recursive: true });
     this.file = path.join(this.dir, 'state.json');
     this.state = loadState(this.file);
-    for (const task of this.state.tasks) if (active(task)) { task.status = 'interrupted'; task.orphanPid = task.pid; task.pid = null; task.error = '工作台上次退出时任务未完成，请检查日志后手动重试'; }
+    for (const task of this.state.tasks) if (active(task)) { task.status = 'interrupted'; task.orphanPid = task.pid; if (task.backend === 'external') task.externalUncertain = true; task.pid = null; task.error = '工作台上次退出时任务未完成，请检查日志后手动重试'; }
     this.relay = new Relay(this);
+    this.external = new (require('./external-members.cjs').ExternalMembers)(this);
     this.autoReview = new (require('./auto-review.cjs').AutoReview)(this);
     this.save();
   }
@@ -151,9 +152,11 @@ class Workbench {
   event(message, taskId) { this.state.activity.unshift({ at: now(), message, taskId }); this.state.activity = this.state.activity.slice(0, 300); }
   task(id) { const t = this.state.tasks.find(t => t.id === id); if (!t) throw new Error('任务不存在'); return t; }
   project(id) { const p = this.state.projects.find(p => p.id === id); if (!p) throw new Error('项目不存在'); return p; }
-  executable(provider) { return Object.hasOwn(this.options.providers || {}, provider) ? this.options.providers[provider] : detect(provider, this.state.settings[provider]); }
-  providers() { return Object.fromEntries(PROVIDERS.map(k => { const x = this.executable(k); return [k, { available: !!x, kind: x?.kind || '', path: x?.display || x?.executable || '', configured: this.state.settings[k] || '' }]; })); }
-  snapshot() { const delivery = require('./deliverables.cjs'); return { ...this.state, tasks: this.state.tasks.map(t => ({...t, artifacts: ['review','done'].includes(t.status) ? delivery.list(t) : []})), providers: this.providers() }; }
+  providerIds(projectId) { return [...PROVIDERS, ...this.state.externalMembers.filter(m => !m.retired && (!projectId || m.projectId === projectId)).map(m => m.id)]; }
+  providerName(id) { return id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : this.external.member(id)?.name || id; }
+  executable(provider) { if (this.external.member(provider)?.retired) return null; if (this.external.member(provider)) return { kind: 'external', display: this.providerName(provider) }; return Object.hasOwn(this.options.providers || {}, provider) ? this.options.providers[provider] : detect(provider, this.state.settings[provider]); }
+  providers() { return Object.fromEntries(this.providerIds().map(k => { const x = this.executable(k); return [k, { available: !!x, kind: x?.kind || '', path: x?.display || x?.executable || '', configured: this.state.settings[k] || '', name: this.providerName(k), projectId: this.external.member(k)?.projectId, online: this.external.list().find(m => m.id === k)?.online }]; })); }
+  snapshot() { const delivery = require('./deliverables.cjs'); return { ...this.state, externalMembers: this.external.list(), tasks: this.state.tasks.map(t => ({...t, artifacts: ['review','done'].includes(t.status) ? delivery.list(t) : []})), providers: this.providers() }; }
   async addProject(input) {
     let repo;
     try { repo = fs.realpathSync(required(input.path, 4000)); } catch (e) { throw new Error(e.code === 'ENOENT' ? '路径不存在：' + input.path : e.message); }
@@ -175,16 +178,16 @@ class Workbench {
   createTask(input) {
     this.project(input.projectId);
     if (input.workflowId && this.relay.flow(input.workflowId).projectId !== input.projectId) throw new Error('任务组必须属于同一项目');
-    if (!PROVIDERS.includes(input.provider)) throw new Error('请选择 Codex 或 Claude');
+    if (!this.providerIds(input.projectId).includes(input.provider)) throw new Error('请选择该项目的 AI 成员 / Select a project member');
     const dependencies = [...new Set(Array.isArray(input.dependencies) ? input.dependencies : [])];
     for (const id of dependencies) if (this.task(id).projectId !== input.projectId) throw new Error('依赖必须来自同一项目');
-    const t = { id: crypto.randomUUID(), projectId: input.projectId, title: required(input.title), prompt: required(input.prompt, 100000), scope: text(input.scope || '', 4000), provider: input.provider, mode: input.mode === 'review' ? 'review' : 'edit', dependencies, baseRef: text(input.baseRef || '', 300), status: 'todo', createdAt: now(), runs: 0, result: '', error: '', ...(input.groupId ? { groupId: input.groupId } : {}), ...(input.workflowId ? { workflowId: input.workflowId } : {}) };
+    const t = { id: crypto.randomUUID(), projectId: input.projectId, title: required(input.title), prompt: required(input.prompt, 100000), scope: text(input.scope || '', 4000), provider: input.provider, language: input.language === 'en' ? 'en' : 'zh', mode: input.mode === 'review' ? 'review' : 'edit', dependencies, baseRef: text(input.baseRef || '', 300), status: 'todo', createdAt: now(), runs: 0, result: '', error: '', ...(input.groupId ? { groupId: input.groupId } : {}), ...(input.workflowId ? { workflowId: input.workflowId } : {}) };
     this.state.tasks.unshift(t); this.event('分配给 ' + t.provider + '：' + t.title, t.id); this.save(); return t;
   }
   // provider: 'codex' | 'claude' | 'both'. 'both' creates one task per AI; each later gets its own branch + worktree.
   createTasks(input) {
     required(input.title); required(input.prompt, 100000); this.project(input.projectId);
-    if (![...PROVIDERS, 'both'].includes(input.provider)) throw new Error('请选择 Codex 或 Claude');
+    if (![...this.providerIds(input.projectId), 'both'].includes(input.provider)) throw new Error('请选择该项目的 AI 成员 / Select a project member');
     text(input.scope || '', 4000);
     for (const id of Array.isArray(input.dependencies) ? input.dependencies : []) if (this.task(id).projectId !== input.projectId) throw new Error('依赖必须来自同一项目');
     if (input.workflowId) {
@@ -202,6 +205,7 @@ class Workbench {
     const source = this.task(id);
     // 卡住（blocked/failed）的任务也能交给另一位接着做，例如 Codex 沙箱提交不了 git 时交给 Claude 提交
     const stuck = ['blocked', 'failed'].includes(source.status);
+    if (source.externalUncertain) throw new Error('请先确认外部执行已停止并释放目录 / Release the external workspace first');
     if (!(settled(source) || stuck) || !source.workspace) throw new Error('任务完成执行、或卡住且已有工作目录后才可交接');
     const next = { ...input, projectId: source.projectId, title: input.title || '接续 · ' + source.title, prompt: input.prompt || '检查上一任务的结果和代码，继续完成尚未解决的工作。', dependencies: [] };
     if (source.workflowId && this.relay.flow(source.workflowId).status !== 'completed') next.workflowId = source.workflowId;
@@ -212,8 +216,8 @@ class Workbench {
     this.event(source.provider + ' → ' + target.provider + '：交接工作目录和结果', target.id); this.save(); return target;
   }
   // 选一位空闲且可用的 AI：用户不用关心该找谁
-  pickProvider() {
-    const ready = PROVIDERS.filter(k => this.executable(k));
+  pickProvider(projectId) {
+    const ready = this.providerIds(projectId).filter(k => this.executable(k));
     const idle = ready.filter(k => !this.state.tasks.some(t => t.provider === k && (active(t) || t.status === 'queued')));
     return (idle.includes('claude') ? 'claude' : idle[0]) || (ready.includes('claude') ? 'claude' : ready[0]) || 'claude';
   }
@@ -227,21 +231,25 @@ class Workbench {
     let message = required(input.message, 100000);
     const p = this.project(input.projectId);
     let channel = input.channel || (input.threadId ? '' : 'group');
-    if (channel && !['group', ...PROVIDERS].includes(channel)) throw new Error('频道只能是群聊或与 Codex / Claude 的私信');
-    let to = ['auto', 'codex', 'claude', 'both'].includes(input.to) ? input.to : 'auto';
-    const lead = message.match(/^@(codex|claude|both|两个|大家|都)[\s,，:：]*/i);
+    if (channel && !['group', ...this.providerIds(p.id)].includes(channel)) throw new Error('频道只能是群聊或与 Codex / Claude 的私信');
+    const ids = this.providerIds(p.id);
+    if (input.to && !['auto', 'both', 'all', ...ids].includes(input.to)) throw new Error('Unknown project member');
+    let to = input.to || 'auto';
+    const externalMention = this.state.externalMembers.find(m => !m.retired && m.projectId === p.id && message.split(/[\s,，:：]+/u).some(word => word.toLowerCase() === '@' + m.name.toLowerCase()));
+    if (to === 'auto' && externalMention) to = externalMention.id;
+    const lead = message.match(/^@(codex|claude|both|all|两个|大家|都)[\s,，:：]*/i);
     if (lead) message = message.slice(lead[0].length).trim() || message;
     if (to === 'auto') {
-      const codex = /@codex/i.test(lead?.[0] + message), claude = /@claude/i.test(lead?.[0] + message), all = /@(both|两个|大家|都)/i.test(lead?.[0] || '') || /@(both|大家|所有人)/i.test(message);
-      to = all || codex && claude ? 'both' : codex ? 'codex' : claude ? 'claude' : 'auto';
+      const codex = /@codex/i.test(lead?.[0] + message), claude = /@claude/i.test(lead?.[0] + message), all = /@(both|all|两个|大家|都)/i.test(lead?.[0] || '') || /@(both|all|大家|所有人)/i.test(message);
+      to = all ? 'all' : codex && claude ? 'both' : codex ? 'codex' : claude ? 'claude' : 'auto';
     }
-    if (PROVIDERS.includes(channel)) to = channel; // 私信只发给对方
+    if (ids.includes(channel)) to = channel; // 私信只发给对方
     const mode = input.mode === 'review' ? 'review' : 'edit';
     const title = message.split('\n').find(x => x.trim()).trim().slice(0, 60);
     let f = input.threadId ? this.relay.flow(input.threadId) : channel ? this.channelFlow(p, channel) : null;
     if (f && f.projectId !== p.id) throw new Error('对话不属于该项目');
     if (!f) {
-      f = this.relay.create({ projectId: p.id, title: channel === 'group' ? p.name + ' · 群聊' : channel ? '私信 · ' + (channel === 'codex' ? 'Codex' : 'Claude') : title, prompt: message, maxTasks: 24 });
+      f = this.relay.create({ projectId: p.id, title: channel === 'group' ? p.name + ' · 群聊' : channel ? '私信 · ' + this.providerName(channel) : title, prompt: message, maxTasks: 24 });
       if (channel) f.channel = p.id + ':' + channel;
     }
     f.chat = true;
@@ -250,10 +258,10 @@ class Workbench {
     const chatFlows = new Set(this.state.workflows.filter(x => x.projectId === p.id && (x.channel || x.id === f.id)).map(x => x.id));
     const last = this.state.tasks.find(t => chatFlows.has(t.workflowId) && (t.workspace || t.status === 'queued' || active(t)));
     const replier = members.find(t => t.result || active(t));
-    const providers = to === 'both' ? PROVIDERS : [to === 'auto' ? replier?.provider || this.pickProvider() : to];
+    const providers = to === 'all' ? ids : to === 'both' ? PROVIDERS : [to === 'auto' ? replier?.provider || this.pickProvider(p.id) : to];
     if (members.length + providers.length > f.maxTasks) f.maxTasks = members.length + 24;
     const tasks = providers.map(provider => {
-      const t = this.createTask({ projectId: p.id, workflowId: f.id, provider, title, prompt: message, mode, scope: last?.scope || '' });
+      const t = this.createTask({ projectId: p.id, workflowId: f.id, provider, title, prompt: message, language: input.language, mode, scope: last?.scope || '' });
       t.chat = true;
       if (last) { t.sourceId = last.id; t.continueFrom = last.id; if (last.workspace) { t.workspace = last.workspace; t.branch = last.branch; } }
       return t;
@@ -267,7 +275,7 @@ class Workbench {
   // 给外部 AI / 脚本读的聊天记录：与界面同样的消息顺序，只给精简字段
   chatMessages(input) {
     const p = this.project(input.projectId), channel = input.channel || 'group';
-    if (!['group', ...PROVIDERS].includes(channel)) throw new Error('频道只能是 group、codex 或 claude');
+    if (!['group', ...this.providerIds(p.id)].includes(channel)) throw new Error('频道只能是 group、codex 或 claude');
     const f = this.channelFlow(p, channel), tasks = f ? this.relay.members(f) : [];
     const strip = s => String(s || '').replace(/```workbench\s*\n[\s\S]*?\n```/g, '').trim();
     const out = [];
@@ -283,7 +291,7 @@ class Workbench {
   // 最近消息：只带最近 10 条、每条最多 400 字、总共不超过 4000 字，长对话也不会越聊越费 token
   transcript(t) {
     if (!t.workflowId) return '';
-    const name = k => k === 'codex' ? 'Codex' : 'Claude';
+    const name = k => this.providerName(k);
     const clip = (s, n = 400) => { s = String(s || '').replace(/```workbench[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim(); return s.length > n ? s.slice(0, n) + '…（略）' : s; };
     const lines = [];
     for (const x of this.relay.members(this.relay.flow(t.workflowId)).filter(x => x.id !== t.id && x.createdAt <= t.createdAt).reverse()) {
@@ -296,11 +304,11 @@ class Workbench {
   }
   // 聊天频道的输入：精简版，不带长篇协议和整组进度
   chatPrompt(t, f) {
-    const p = this.project(t.projectId), name = k => k === 'codex' ? 'Codex' : 'Claude', other = t.provider === 'codex' ? 'claude' : 'codex';
-    const dm = PROVIDERS.includes(String(f.channel).split(':')[1]);
+    const p = this.project(t.projectId), name = k => this.providerName(k), other = t.provider === 'codex' ? 'claude' : 'codex';
+    const dm = this.providerIds(p.id).includes(String(f.channel).split(':')[1]);
     const shared = [p.context, p.contracts].filter(Boolean).join('\n\n');
     const history = this.transcript(t);
-    return [`你是 ${name(t.provider)}，在项目「${p.name}」的${dm ? '私信里，对方是用户' : '群聊里，成员：用户、Codex、Claude'}。像聊天一样用中文简短回复（一般不超过 10 行）；长内容（报告、清单、代码说明）写进工作目录的文件，回复里给路径。读取仓库 AGENTS.md / README 并遵守。不要合并、推送或部署。`,
+    return [`你是 ${name(t.provider)}，在项目「${p.name}」的${dm ? '私信里，对方是用户' : '群聊里，成员：用户、' + this.providerIds(p.id).map(name).join('、')}。像聊天一样${t.language === 'en' ? '用英文' : '用中文'}简短回复（一般不超过 10 行）；长内容（报告、清单、代码说明）写进工作目录的文件，回复里给路径。读取仓库 AGENTS.md / README 并遵守。不要合并、推送或部署。`,
       `仓库基线：${t.baseRef || p.baseRef}；任务类型：${t.mode === 'review' ? '只读，不改文件' : '可以修改代码'}`,
       shared ? `群公告（共享需求与接口）：\n${shared.length > 3000 ? shared.slice(0, 3000) + '…（略，完整版见工作台）' : shared}` : '',
       history ? `最近消息：\n${history}` : '',
@@ -355,13 +363,19 @@ class Workbench {
     await git(p.path, exists ? ['worktree', 'add', workspace, branch] : ['worktree', 'add', '-b', branch, workspace, base]);
     t.workspace = workspace; t.branch = branch;
   }
-  async start(id) {
+  async start(id, options = {}) {
     if (this.closing) throw new Error('工作台正在退出');
     const t = this.task(id), p = this.project(t.projectId);
     if (t.workflowId && ['paused', 'stopped', 'completed'].includes(this.relay.flow(t.workflowId).status)) throw new Error('请先继续任务组再执行');
     // 聊天续写：上一条消息开始执行后才有工作目录，到真正启动时再接上
     if (!t.workspace && t.continueFrom) { const src = this.state.tasks.find(x => x.id === t.continueFrom); if (src?.workspace) { t.workspace = src.workspace; t.branch = src.branch; } }
+    if (t.externalUncertain || this.state.tasks.some(x => x.externalUncertain && x.workspace && x.workspace === t.workspace)) throw new Error('外部执行状态未知，请先释放目录 / External workspace is still locked');
     if (active(t) || t.status === 'done') throw new Error('该任务不能重复启动');
+    if (this.external.member(t.provider)?.retired) throw new Error('该成员已离开，请重新加入 / Member has left');
+    if (this.external.member(t.provider) && !options.externalClaim) {
+      if (t.workflowId) { const f = this.relay.flow(t.workflowId); f.status = 'running'; f.reason = ''; f.reasonCode = ''; }
+      return this.relay.enqueue(id);
+    }
     for (const x of this.state.tasks.filter(x => x.id === t.id || t.workspace && x.workspace === t.workspace)) {
       if (x.orphanPid) {
         try { process.kill(x.orphanPid, 0); throw new Error('上次 CLI 进程仍可能运行，请先在任务管理器检查进程 ' + x.orphanPid); }
@@ -382,6 +396,9 @@ class Workbench {
       fs.rmSync(finalPath, { force: true });
       const relayChannel = this.relay.prepare(t);
       const prompt = this.promptFor(t); fs.writeFileSync(path.join(d, 'input.txt'), prompt, { mode: 0o600 });
+      if (executable.kind === 'external') {
+        t.status = 'running'; t.pid = null; this.log(t, 'system', 'External member claimed task: ' + this.providerName(t.provider)); this.save(); return t;
+      }
       const spec = this.options.command ? this.options.command(t, executable, finalPath) : command(t.provider, t.workspace, t.mode, finalPath, executable, relayChannel);
       this.log(t, 'system', `第 ${t.runs} 次执行 · ${t.provider}（${t.backend}）· 分支 ${t.branch} · 目录 ${t.workspace}`);
       const child = spawn(spec.executable, spec.args, { cwd: t.workspace, windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NO_COLOR: '1', PATH: toolPath(this.dir, this.state.settings), ...this.relay.environment(t, relayChannel) } });
@@ -432,6 +449,7 @@ class Workbench {
   }
   async stop(id) {
     const t = this.task(id), run = this.running.get(id);
+    if (t.backend === 'external' && active(t)) return this.external.stop(t);
     if (!run && ['starting', 'stopping'].includes(t.status)) { t.cancelRequested = true; t.status = 'stopping'; this.save(); return; }
     if (!run) throw new Error('该任务当前没有运行进程');
     run.cancelled = true; t.status = 'stopping'; this.save();
@@ -464,7 +482,7 @@ class Workbench {
     this.save(); this.relay.settingsChanged(); return this.providers();
   }
   async close() {
-    this.closing = true;
+    this.closing = true; clearInterval(this.external.timer);
     await Promise.allSettled(this.state.tasks.filter(active).map(t => this.stop(t.id)));
     // Wait briefly for killed children to report, so their final status is persisted.
     const end = Date.now() + 5000;

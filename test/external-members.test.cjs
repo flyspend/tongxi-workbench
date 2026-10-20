@@ -1,0 +1,99 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { Workbench, git } = require('../core.cjs');
+async function setup(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'tongxi-members-')), repo = path.join(root,'repo'); fs.mkdirSync(repo);
+  await git(repo,['init']); await git(repo,['config','user.name','Test']); await git(repo,['config','user.email','test@localhost']);
+  fs.writeFileSync(path.join(repo,'README.md'),'fixture'); await git(repo,['add','.']); await git(repo,['-c','commit.gpgsign=false','commit','-m','fixture']);
+  const wb = new Workbench(path.join(root,'data'), {providers:{codex:null,claude:null}}); t.after(() => wb.close()); const p = await wb.addProject({path:repo});
+  const a = wb.external.register({projectId:p.id,name:'Gemini'}), b = wb.external.register({projectId:p.id,name:'Cursor'});
+  const auth = m => ({memberId:m.id,key:m.key});
+  const send = to => wb.chat({projectId:p.id,channel:'group',to,message:'检查项目 / inspect project'}).tasks[0];
+  const claim = async (m,task) => { const c = await wb.external.claim(auth(m)); assert.equal(c.job.taskId,task.id); return {...auth(m),taskId:task.id,lease:c.lease}; };
+  return {wb,p,a,b,auth,send,claim,root};
+}
+test('external identity stays project scoped, secrets are not exposed, mentions and DMs route by member', async t => {
+  const {wb,p,a,auth,claim} = await setup(t);
+  assert.equal(wb.snapshot().providers[a.id].name,'Gemini');
+  assert.ok(!JSON.stringify(wb.snapshot()).includes(a.key)); assert.ok(!JSON.stringify(wb.snapshot()).includes('secretHash'));
+  assert.throws(() => wb.external.register({projectId:p.id,name:'codex'}));
+  assert.throws(() => wb.external.register({projectId:p.id,name:'Gemini'}));
+  const task = wb.chat({projectId:p.id,message:'@Gemini 请检查项目'}).tasks[0]; assert.equal(task.provider,a.id);
+  const lease = await claim(a,task); assert.ok(fs.existsSync(lease.taskId && task.workspace));
+  assert.equal((await wb.external.claim(auth(a))).job.taskId,task.id, 'retry claim returns the same job');
+  assert.throws(() => wb.external.heartbeat({...lease,key:'wrong'}));
+  wb.external.report({...lease,status:'complete',result:'Checked',validation:['Read README']});
+  assert.equal(task.status,'done');
+  const dm = wb.chat({projectId:p.id,channel:a.id,to:'claude',message:'private'}).tasks[0]; assert.equal(dm.provider,a.id);
+  const second = wb.project(p.id); const fakeProject = {...second,id:'other-project',name:'Other'}; wb.state.projects.push(fakeProject);
+  assert.throws(() => wb.chat({projectId:fakeProject.id,to:a.id,message:'cross project'}));
+});
+test('external handoff preserves uncommitted code and waits for the sender', async t => {
+  const {wb,p,a,b,send,claim,auth} = await setup(t); const task=send(a.id), lease=await claim(a,task);
+  fs.writeFileSync(path.join(task.workspace,'answer.txt'),'uncommitted');
+  wb.external.report({...lease,status:'complete',validation:['Created answer.txt'],result:'Review next\n```workbench\n'+JSON.stringify({action:'handoff',provider:b.id,title:'Review',prompt:'Check answer.txt',mode:'review'})+'\n```'});
+  const next=wb.state.tasks.find(x=>x.sentBy===a.id); assert.equal(task.status,'done'); assert.equal(next.provider,b.id);
+  const leaseB=await claim(b,next); assert.equal(next.workspace,task.workspace); assert.equal(fs.readFileSync(path.join(next.workspace,'answer.txt'),'utf8'),'uncommitted');
+  assert.throws(()=>wb.external.report({...auth(a),taskId:next.id,lease:leaseB.lease,status:'complete',result:'wrong member',validation:['read']}));
+  assert.throws(()=>wb.external.report({...lease,status:'complete',result:'stale',validation:['read']}));
+  assert.throws(()=>wb.external.report({...leaseB,status:'complete',result:'missing validation'}));
+  wb.external.report({...leaseB,status:'complete',result:'Verified',validation:['Read answer.txt']});
+  assert.equal(wb.relay.flow(task.workflowId).status,'completed');
+  assert.equal(wb.chatMessages({projectId:p.id}).messages.at(-1).from,b.id);
+});
+test('a built-in executor hands off to an external member through the same scheduler', async t => {
+  const {wb,p,a,auth,claim}=await setup(t);
+  const result='Ready\n```workbench\n'+JSON.stringify({action:'handoff',provider:a.id,title:'External review',prompt:'Read README',mode:'review'})+'\n```';
+  wb.options.providers.codex={executable:process.execPath,kind:'cli'};
+  wb.options.command=()=>({executable:process.execPath,args:['-e','console.log('+JSON.stringify(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:result}}))+')']});
+  const first=wb.createTasks({projectId:p.id,provider:'codex',title:'Start',prompt:'Prepare handoff',autoContinue:true})[0]; wb.relay.enqueue(first.id);
+  const end=Date.now()+10000; while(first.status!=='done'&&Date.now()<end) await new Promise(r=>setTimeout(r,20));
+  assert.equal(first.status,'done',first.error); const next=wb.state.tasks.find(x=>x.sentBy==='codex');assert.equal(next.provider,a.id);
+  const lease=await claim(a,next);assert.equal(next.workspace,first.workspace);
+  wb.external.report({...lease,status:'complete',result:'Reviewed',validation:['Read README']});assert.equal(wb.relay.flow(first.workflowId).status,'completed');
+});
+test('stop waits for acknowledgement; expired workers lock their workspace until explicitly released', async t => {
+  const {wb,a,b,send,claim,auth}=await setup(t); const task=send(a.id), lease=await claim(a,task);
+  await wb.stop(task.id); assert.equal(task.status,'stopping'); assert.equal(wb.external.heartbeat(lease).stopRequested,true);
+  wb.external.report({...lease,status:'complete',result:'Stopped',validation:['Stopped editing']}); assert.equal(task.status,'stopped');
+  const next=send(b.id), leaseB=await claim(b,next); wb.external.leases.get(next.id).expires=0; wb.external.expire();
+  assert.equal(next.status,'interrupted'); assert.equal(next.externalUncertain,true);
+  await assert.rejects(wb.start(next.id,{externalClaim:true}),/locked/);
+  assert.throws(()=>wb.external.report({...leaseB,status:'complete',result:'late',validation:['read']}));
+  assert.throws(()=>wb.external.release({...auth(b),taskId:next.id}));
+  wb.external.release({...auth(b),taskId:next.id,confirmStopped:true}); assert.equal(next.externalUncertain,false);
+  await wb.start(next.id); assert.equal(next.status,'queued');
+  const resumed=await claim(b,next); assert.notEqual(resumed.lease,leaseB.lease);
+  wb.external.report({...resumed,status:'complete',result:'Recovered',validation:['Worker stopped, then read files']});
+  wb.external.leave(auth(b)); assert.ok(!wb.providerIds(next.projectId).includes(b.id));
+  await assert.rejects(wb.external.claim(auth(b)),/Rejoin/);
+  wb.external.rejoin(auth(b)); assert.ok(wb.providerIds(next.projectId).includes(b.id));
+});
+test('server restart invalidates external leases and retains the uncertain workspace lock', async t => {
+  const {wb,a,send,claim,root,auth}=await setup(t),task=send(a.id); await claim(a,task);
+  await wb.close(); const restored=new Workbench(path.join(root,'data'));t.after(()=>restored.close());
+  assert.equal(restored.task(task.id).externalUncertain,true); assert.equal(restored.task(task.id).status,'interrupted');
+  restored.external.release({...auth(a),taskId:task.id,confirmStopped:true});
+  await restored.start(task.id); const next=await restored.external.claim(auth(a));assert.equal(next.job.taskId,task.id);
+});
+test('bridge registration, claiming, heartbeat and reporting keep secrets in local files', async t => {
+  const {wb,p,root}=await setup(t), {server,token}=require('../server.cjs').createServer(wb);
+  await new Promise(r=>server.listen(0,'127.0.0.1',r)); t.after(()=>new Promise(r=>server.close(r)));
+  const file=path.join(root,'connection.json'); fs.writeFileSync(file,JSON.stringify({port:server.address().port,token}));
+  const invoke=async(...args)=>{
+    const env={...process.env,WORKBENCH_CONNECTION_FILE:file}; delete env.WORKBENCH_AGENT_MAILBOX;
+    return (await require('node:util').promisify(require('node:child_process').execFile)(process.execPath,[path.join(__dirname,'..','bridge.cjs'),...args],{env,windowsHide:true})).stdout;
+  };
+  assert.match(await invoke('setup-prompt','--lang','en'),/Connect/);
+  const joined=JSON.parse(await invoke('join','--project',p.id,'--name','LocalAI')); assert.ok(joined.memberId); assert.ok(!joined.key);
+  const member=wb.external.member(joined.memberId); assert.ok(!JSON.stringify(await invoke('members')).includes(member.secretHash));
+  const task=wb.chat({projectId:p.id,to:joined.memberId,message:'Read README'}).tasks[0];
+  const job=JSON.parse(await invoke('claim','--member',joined.memberId)); assert.equal(job.job.taskId,task.id); assert.ok(!job.lease);
+  assert.equal(JSON.parse(await invoke('heartbeat','--member',joined.memberId,'--task',task.id)).stopRequested,false);
+  const result=path.join(root,'result.txt');fs.writeFileSync(result,'Reviewed README');
+  assert.equal(JSON.parse(await invoke('report','--member',joined.memberId,'--task',task.id,'--result-file',result,'--validation','Read README')).status,'done');
+});

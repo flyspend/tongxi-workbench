@@ -1,8 +1,16 @@
-# 同席 · 本地双 AI 工作台 v0.4
+# 同席 · 本地 AI 协作工作台 v0.4
+
+中文 | [English](README.en.md)
 
 > A local, zero-dependency web workbench where you chat with **Codex CLI** and **Claude Code** in one group: they split work, hand off and review each other in isolated Git worktrees, and other AI agents can join through a one-command bridge. Windows-first, Node.js ≥ 22, no npm install.
 
 用户分配总任务后，Codex、Claude 可以直接给对方发任务、审查和回传修复，后台自动启动下一步，直到整组完成。双方共享需求、接口、工作目录和执行结果。桌面入口启动本机网页界面和 Node 服务；没有第三方云端调度服务或运行依赖。运行的 Codex / Claude CLI 仍使用各自已有的账号、模型服务和权限设置，它们本身可能联网。
+
+## 界面语言与其他 AI 成员
+
+主界面右上角可直接选择 **中文 / English**，浏览器会记住选择；也可用 `/?lang=en` 直接进入英文界面。界面和复制的接入提示词随语言切换，项目名、AI 回复、报告和日志保留原文。
+
+除了内置 Codex、Claude，任何具备本机终端和文件工具的 AI 都能以自己的名字加入指定项目、收任务、回传结果、参与交接。通过提示词加入，无需编写厂商适配器。详见 [外部 AI 独立成员接入](EXTERNAL-AI.md)。尚未逐一验证所有第三方 AI 产品；纯聊天 AI 无法直接操作本机。
 
 ## 不会安装？让 AI 帮你接入
 
@@ -39,7 +47,7 @@ run.cmd smoke    # 冒烟测试：node test/smoke.cjs
 
 ## 聊天（默认界面）
 
-像聊天软件一样：每个项目有一个**群**（你、Codex、Claude）和与两位 AI 的**私信**。Enter 发送。
+像聊天软件一样：每个项目有一个**群**（你、内置与外部成员）和各成员的**私信**。Enter 发送。接收成员下拉框可直接选择任意成员；`@大家` / `@all` 包括该项目全部已加入成员。
 
 - 群里派活：不 @ 时由刚才回话的那位接着做（第一条给空闲的 AI）；写 `@Codex`、`@Claude`、`@大家`（或点输入框上方的按钮）指定人。
 - AI 之间自己聊：需要复核、修复时，它们在群里互相 @ 并接着做，你不用转达。正在做的事显示在输入框上方的“正在输入”栏，可展开看过程或停止。
@@ -51,7 +59,7 @@ run.cmd smoke    # 冒烟测试：node test/smoke.cjs
 
 ## 其他 AI 一键接入
 
-任何能在本机运行命令的 AI（另一个 Claude Code 会话、Cursor、Gemini CLI、自己写的脚本……）都可以加入群聊：派活、私信、等回复。
+任何能在本机运行命令的 AI 或脚本都可以成为独立成员：使用自己的名字、领取任务、回传结果，也可派活、私信和等回复。内置执行者由工作台启动；外部成员主动轮询领取任务，工作台不能启动已经关闭的其他 AI 应用。
 
 1. 点聊天页右侧 **“复制接入提示词”**，或运行 `node bridge.cjs prompt`（程序尚未启动时用 `node bridge.cjs setup-prompt`）。提示词里已经填好本机 Node 路径、桥接脚本路径和项目列表，不含凭证。
 2. 把这段文字发给那个 AI。它之后只需要：
@@ -95,7 +103,7 @@ node bridge.cjs status
 
 新发送默认创建自动接力任务组；`--workflow 任务组ID` 可追加到同一组。桥接自动读取本机连接记录，不需要复制或打印凭证。它只向本机工作台投递，不控制其他桌面聊天窗口。
 
-## 统一接口（Codex / Claude 相同）
+## 统一接口
 
 所有 `/api/*`（除 health）需要 `Authorization: Bearer <token>`。
 
@@ -134,11 +142,18 @@ node bridge.cjs status
 - 订阅（Claude Pro/Max、ChatGPT Plus/Pro 等）的额度按普通个人使用设计，长时间自动接力会很快用完。重度或无人值守的自动化，请改用各自的 API Key（Claude：`ANTHROPIC_API_KEY`；Codex：`CODEX_API_KEY`），并遵守 [Anthropic 条款](https://code.claude.com/docs/en/legal-and-compliance)和 OpenAI 条款。
 - 不要把工作台部署成多人共享服务、替别人跑他们的请求，或把你的订阅/凭证提供给他人使用。
 
+## 外部成员的权限与中断恢复
+
+外部成员通过 `join` 注册，`claim` 领取，`heartbeat` 续期，`report` 回传；使用 `members` 查看成员。`leave` 离开，`join --member 原ID` 重新加入。完整命令见 [接入协议](EXTERNAL-AI.md)。任务租约、轮次和成员身份检查防止误报和串任务。
+
+工作台不能强制终止其他 AI 应用；停止后等待成员确认。失联或重启后，执行中的目录保持锁定，须确认外部工作已停止，再 `release --confirm-stopped 1` 释放。成员的实际文件权限由宿主应用决定，只读模式不是通用沙箱。同一用户可读本机凭证的程序仍可冒用成员身份。
+
 ## 本地存储与边界
 
 - `.local/state.json`：项目、任务、状态、结果（原子写入；文件损坏时自动备份为 `state.corrupt-*.json` 并以空状态启动）。
 - `.local/runs/<任务>/`：输入快照、`events.jsonl` 实时输出日志。
 - `.local/worktrees/`：代码目录，有未提交成果时不要删除。
+- `.local/members/`：外部成员身份凭证和当前任务租约，禁止分享或提交。
 - `.local/token`、`connection.json`：本机凭证。`.local/` 和 `*.log` 已被 `.gitignore` 排除，不要提交。
 
 HTTP API 校验 Bearer 凭证、Host 和 Origin（仅接受 127.0.0.1 / localhost / [::1] 加本端口），页面使用 CSP 并转义用户文本；查看 diff 禁止外部 diff/textconv 程序。它防御跨站访问，不防御已经控制当前用户账户的恶意软件。
@@ -163,4 +178,6 @@ HTTP API 校验 Bearer 凭证、Host 和 Origin（仅接受 127.0.0.1 / localhos
 
 ## 许可
 
-MIT，见 [LICENSE](LICENSE)。本项目只调用你本机已安装的 Codex CLI / Claude Code，不包含、不分发它们。
+MIT，见 [LICENSE](LICENSE)。复制或分发本软件全部或实质部分时，应保留版权声明与许可声明，实践上随副本保留完整 LICENSE 即可。MIT 不强制产品首页署名、附仓库链接或公开修改后的源码。欢迎注明来源并附 [同席仓库](https://github.com/flyspend/tongxi-workbench) 链接，但这不是额外许可条件。[MIT 标准文本](https://opensource.org/license/mit)。
+
+本项目只调用本机已安装的 CLI，不包含、不分发它们。MIT 不替代各模型服务自身的条款。

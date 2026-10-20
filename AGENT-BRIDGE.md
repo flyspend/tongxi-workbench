@@ -1,5 +1,9 @@
 # AI 任务接力协议
 
+中文 | [English](AGENT-BRIDGE.en.md)
+
+从其他 AI 应用作为独立成员接入时，先读 [外部成员协议](EXTERNAL-AI.md)；以下文件信箱命令适用于工作台启动的内置进程。
+
 工作台将当前任务、总目标、进度及本协议自动加入每轮输入。发送后续任务后应结束当前执行；后台将在发送方退出后自动启动接收方，不需要用户点击。只在整套职责确已完成时提交完成报告。
 
 ## 最终回复协议
@@ -10,7 +14,7 @@
 {"action":"handoff","provider":"claude","title":"复核实现并继续","prompt":"检查当前目录的实现，运行适用检查；发现问题交给 Codex 修复，否则完成任务。","mode":"review"}
 ```
 
-`provider` 为 `codex` 或 `claude`，`mode` 为 `edit` 或 `review`。默认沿用发送方的目录、分支和未提交成果；只有明确需要独立工作目录时使用 `strategy:"parallel"`。每位 AI 可以继续给另一方或自己发任务。
+`provider` 为同一项目成员 ID：`codex`、`claude` 或已注册的 `ext-...`，`mode` 为 `edit` 或 `review`。默认沿用发送方的目录、分支和未提交成果；只有明确需要独立工作目录时使用 `strategy:"parallel"`。每位 AI 可以继续给另一方或自己发任务。
 
 完成当前职责且没有剩余工作：
 
