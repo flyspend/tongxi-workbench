@@ -1,0 +1,8 @@
+.local/
+node_modules/
+*.log
+ui-validation.png
+workbench-preview.png
+.env
+.env.*
+*.corrupt-*.json
