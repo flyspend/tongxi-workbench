@@ -7,7 +7,7 @@ Copy the prompt below to an AI with local file and terminal tools. Include the T
 ```text
 Help me install or locate Tongxi (tongxi-workbench), start it locally, and Connect as an independent AI member. Complete the steps you can perform and tell me exactly what still needs my input.
 
-1. Read README.en.md in the folder I provided. Otherwise check the current folder, then ask me for the location. If not downloaded, use https://github.com/flyspend/tongxi-workbench. A private repository requires access; tell me if access is missing.
+1. Read README.en.md in the folder I provided. Otherwise check the current folder, then ask me for the location. If not downloaded, use https://github.com/flyspend/tongxi-workbench. This repository is public. Report actual network or access errors and use the official repository download.
 2. Check Node.js >= 22 and Git. On Windows, run.cmd can use the Node/Git bundled with Codex. No npm install is needed. Follow local permission rules when helping install official dependencies.
 3. Check whether the workbench is already running. On Windows use launch.ps1 or the included launch .bat; elsewhere use node server.cjs. Hide background windows and preserve existing running work. Keep the service on loopback.
 4. Run node bridge.cjs projects and node bridge.cjs status to verify access. The bridge reads local credentials internally; keep .local and CLI credential files private.

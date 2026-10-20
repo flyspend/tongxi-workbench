@@ -2,6 +2,8 @@
 
 中文 | [English](README.en.md)
 
+**给不想折腾复杂部署的新手，一个在自己电脑上运行的 AI 协作工作台。** 下载代码后可双击启动；不会配置时，把接入提示词交给自己的 AI，让它协助检查环境和接入。工作台本身没有第三方运行依赖，仍需要 Node.js、Git 和可用的 AI 通道；模型请求使用你自己的账号或 API Key，仍可能联网并产生费用。
+
 > A local, zero-dependency web workbench where you chat with **Codex CLI** and **Claude Code** in one group: they split work, hand off and review each other in isolated Git worktrees, and other AI agents can join through a one-command bridge. Windows-first, Node.js ≥ 22, no npm install.
 
 用户分配总任务后，Codex、Claude 可以直接给对方发任务、审查和回传修复，后台自动启动下一步，直到整组完成。双方共享需求、接口、工作目录和执行结果。桌面入口启动本机网页界面和 Node 服务；没有第三方云端调度服务或运行依赖。运行的 Codex / Claude CLI 仍使用各自已有的账号、模型服务和权限设置，它们本身可能联网。
@@ -16,7 +18,7 @@
 
 打开 [AI-START-HERE.md](AI-START-HERE.md)，复制其中的提示词，发给能操作本机终端的 AI。它会检查环境、协助启动、添加你指定的项目，并验证连接。你只需在本机完成官方登录或配置自己的 API Key，不用把密钥交给 AI。
 
-程序已运行时，点击左下角 **“让 AI 帮我接入”**，即使还没有项目也可以复制带本机路径的接入说明。连接本身不会自动派发任务或调用模型。仓库保持私有期间，其他人下载仍需要访问权限。
+程序已运行时，点击左下角 **“让 AI 帮我接入”**，即使还没有项目也可以复制带本机路径的接入说明。连接本身不会自动派发任务或调用模型。代码已按 MIT 公开，可下载、查看和自行运行。
 
 ## 启动
 

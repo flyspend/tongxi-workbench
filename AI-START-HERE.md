@@ -7,7 +7,7 @@
 ```text
 请帮我在这台电脑上安装或找到「同席 tongxi-workbench」，启动并尝试接入。我不熟悉命令，请尽量替我完成可操作的步骤。
 
-1. 先查看我提供的同席目录及 README.md；没提供位置时，先检查当前工作目录，找不到再问我程序在哪里。尚未下载时，从 https://github.com/flyspend/tongxi-workbench 获取代码。仓库目前可能是私有的：没有权限就告诉我需要登录或由作者提供访问权限，不要寻找来路不明的下载。
+1. 先查看我提供的同席目录及 README.md；没提供位置时，先检查当前工作目录，找不到再问我程序在哪里。尚未下载时，从 https://github.com/flyspend/tongxi-workbench 获取代码。这是公开仓库；下载失败时说明实际网络或访问错误，并使用官方仓库提供的下载入口。
 2. 检查 Node.js >= 22 和 Git。Windows 上 run.cmd 可以使用本机 Codex 附带的 Node/Git，不需要 npm install。依赖缺失时说明缺少什么，按本机授权规则协助安装官方版本。
 3. 先检查工作台是否已运行。Windows 可运行 launch.ps1 或“启动本地协作台.bat”启动；其他系统使用 node server.cjs。后台进程应隐藏窗口，已有运行中的工作不要停止。仅在本机回环地址运行，不开放外网。
 4. 使用本机 Node 执行 bridge.cjs projects 和 bridge.cjs status，确认连接；桥接脚本会自行读取凭证，不要打印或上传 .local 里的内容。失败时根据实际错误检查进程和连接文件；不要通过关闭鉴权或提升代理权限来解决。
