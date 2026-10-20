@@ -224,7 +224,7 @@ $('#view-board').onclick = () => setView('board');
 $('#channel-list').addEventListener('click', e => { const el = e.target.closest('[data-channel]'); if (el) openChannel(el.dataset.channel); });
 $('#member-list').addEventListener('click', e => { const el = e.target.closest('[data-channel]'); if (el) openChannel(el.dataset.channel); });
 $('#edit-notice').onclick = () => $('#shared').click();
-$('#connect-ai').onclick = async () => {
+$('#connect-ai').onclick = $('#setup-ai').onclick = async () => {
   try {
     const { prompt } = await api('connect-prompt');
     try { await navigator.clipboard.writeText(prompt); notify('已复制接入提示词，粘贴给其他 AI 即可'); }

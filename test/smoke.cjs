@@ -37,6 +37,14 @@ const step = msg => console.log('  ✓ ' + msg);
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-smoke-'));
   const repo = path.join(root, 'repo'), data = path.join(root, 'data');
+  const bridge = async (...args) => {
+    const env = { ...process.env, WORKBENCH_CONNECTION_FILE: path.join(data, 'connection.json') };
+    delete env.WORKBENCH_AGENT_MAILBOX;
+    const { stdout } = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, [path.join(ROOT, 'bridge.cjs'), ...args], { env, windowsHide: true });
+    return stdout;
+  };
+  assert.match(await bridge('setup-prompt'), /帮我安装、启动并接入同席/);
+  await assert.rejects(bridge('projects'), /工作台尚未启动/);
   fs.mkdirSync(repo);
   await git(repo, ['init']); await git(repo, ['config', 'user.name', 'Smoke']); await git(repo, ['config', 'user.email', 'smoke@localhost']);
   fs.writeFileSync(path.join(repo, 'README.md'), '# smoke\n'); await git(repo, ['add', '.']); await git(repo, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'fixture']);
@@ -51,8 +59,16 @@ async function main() {
     assert.equal((await api('/api/state')).status, 200);
     assert.equal((await api('/api/tasks/nope')).status, 404);
     step('health / 页面 / 鉴权 / 404 正常');
-    const project = (await api('/api/projects', 'POST', { path: repo, name: '冒烟项目' })).body;
+    const emptyPrompt = (await api('/api/connect-prompt')).body.prompt;
+    assert.match(emptyPrompt, /add-project/);
+    assert.ok(!emptyPrompt.includes(server.token));
+    const project = JSON.parse(await bridge('add-project', '--path', repo, '--name', '冒烟项目'));
     assert.ok(project.id, JSON.stringify(project));
+    assert.equal(JSON.parse(await bridge('add-project', '--path', repo)).id, project.id);
+    await assert.rejects(bridge('add-project', '--path', '.'), /绝对路径/);
+    assert.equal(JSON.parse(await bridge('projects')).length, 1);
+    assert.equal(JSON.parse(await bridge('status')).tasks.length, 0, '连接和添加项目不得派发任务');
+    assert.match(await bridge('prompt'), /先尝试只读连接/);
     const bad = await api('/api/projects', 'POST', { path: path.join(root, 'missing') });
     assert.equal(bad.status, 400); assert.match(bad.body.error, /不存在/);
     step('添加项目；错误路径返回可读错误');

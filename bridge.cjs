@@ -21,9 +21,13 @@ function message(action, o) {
 }
 // 给外部 AI 的接入说明：路径和项目都已填好，整段复制给任何能运行命令的 AI 即可
 function connectPrompt(projects) {
-  const run = `"${process.execPath}" "${path.join(__dirname, 'bridge.cjs')}"`;
+  const run = `${process.platform === 'win32' ? '& ' : ''}"${process.execPath}" "${path.join(__dirname, 'bridge.cjs')}"`;
   return [
     '你可以通过本机的「同席」工作台把工作交给 Codex 和 Claude，它们在群里自己分工、互相复核，你只需要发消息和看回复。',
+    '',
+    `先尝试只读连接：${run} projects，然后运行 ${run} status。成功后告诉用户已接入，等待具体任务，不要自动发送测试任务。`,
+    `若服务未启动，先阅读 ${path.join(__dirname, 'AI-START-HERE.md')}，协助启动本机工作台后重试。`,
+    `用户已指定的 Git 项目可用 ${run} add-project --path "仓库绝对路径" 添加；不要自行选项目或替用户初始化、提交仓库。`,
     '',
     `可用项目：${projects.map(p => `${p.name}（${p.id}）`).join('、') || '尚未添加，请先在工作台页面添加本机 Git 仓库'}`,
     '',
@@ -36,14 +40,16 @@ function connectPrompt(projects) {
     `- 长消息：先写进文件，再用 --message-file 文件路径`,
     '',
     '规则：',
-    '- 一次说清楚目标和验收标准；它们会在同一个 Git 工作目录里做，不会推送、合并或部署。',
+    '- 一次说清楚目标和验收标准；工作台不会自动推送、合并或部署，CLI 命令权限仍以本机设置为准。',
     '- say 返回 done:false 表示还在处理，用 read --wait 继续等，不要重复发送同一条消息。',
     '- 回复里 kind=handoff 是 AI 之间的交接，kind=reply 是某位 AI 的回复；status 为 blocked/failed 时把原因告诉用户或回一句怎么处理。',
     '- 工作台只接受本机请求，凭证由桥接脚本自动读取，不要打印或外传 .local 目录里的任何文件。',
+    '- 登录由用户在官方 CLI 中完成；API Key 由用户在本机配置，不要让用户把密钥、密码或验证码粘贴到聊天里。',
   ].join('\n');
 }
 async function main(argv = process.argv.slice(2)) {
   const { action, options: o } = argumentsFor(argv);
+  if (action === 'setup-prompt' && !process.env.WORKBENCH_AGENT_MAILBOX) return fs.readFileSync(path.join(__dirname, 'AI-START-HERE.md'), 'utf8');
   const mailbox = process.env.WORKBENCH_AGENT_MAILBOX;
   if (mailbox) {
     if (o.project || o.workflow) throw new Error('代理只能给当前任务组派发后续任务');
@@ -63,6 +69,7 @@ async function main(argv = process.argv.slice(2)) {
     return result;
   }
   const file = process.env.WORKBENCH_CONNECTION_FILE || path.join(__dirname, '.local', 'connection.json');
+  if (!fs.existsSync(file)) throw new Error('工作台尚未启动或未找到连接记录。请先启动工作台；首次接入可运行 node bridge.cjs setup-prompt 获取引导。');
   const c = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Number.isInteger(c.port) || c.port < 1 || c.port > 65535 || !/^[0-9a-f]{64}$/.test(c.token)) throw new Error('本机连接记录无效');
   const api = async (route, data) => {
@@ -70,6 +77,13 @@ async function main(argv = process.argv.slice(2)) {
     const value = await r.json(); if (!r.ok) throw new Error(value.error); return value;
   };
   const state = () => api('state');
+  if (action === 'add-project') {
+    if (!o.path) throw new Error('请用 --path 指定用户选择的 Git 仓库绝对路径');
+    if (!path.isAbsolute(o.path)) throw new Error('--path 必须是绝对路径');
+    const existing = (await state()).projects.find(p => p.path === fs.realpathSync(o.path));
+    const p = existing || await api('projects', { path: o.path, ...(o.name ? { name: o.name } : {}), ...(o['base-ref'] ? { baseRef: o['base-ref'] } : {}) });
+    return { id: p.id, name: p.name, baseRef: p.baseRef, existing: !!existing };
+  }
   // 项目可以写 ID 或名称；只有一个项目时可以省略
   const projectOf = async () => {
     const list = (await state()).projects;
