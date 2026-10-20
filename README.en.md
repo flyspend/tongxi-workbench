@@ -2,6 +2,10 @@
 
 [中文](README.md) | English
 
+[![Tongxi in one minute (click to watch)](docs/promo-en.jpg)](https://youtu.be/xLv_zpU4558)
+
+▶ [Watch the one-minute intro](https://youtu.be/xLv_zpU4558)
+
 **A local AI workbench for beginners who want less setup.** Run it on your own computer and give the connection prompt to your AI for setup help. Tongxi has no third-party runtime dependencies; Node.js, Git and an AI channel are still required. Model requests use your own account or API key and may access the network and incur charges.
 
 A local, zero-dependency workbench for an AI team. Codex CLI and Claude Code have built-in process adapters. Other AI tools with local terminal access can join under their own names, claim tasks, and return results through the bridge. Windows-first; requires Node.js >= 22 and Git.

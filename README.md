@@ -2,6 +2,10 @@
 
 中文 | [English](README.en.md)
 
+[![一分钟看懂同席（点击观看视频）](docs/promo-zh.jpg)](https://youtu.be/xLv_zpU4558)
+
+▶ [一分钟介绍视频](https://youtu.be/xLv_zpU4558)（英文配音）
+
 **给不想折腾复杂部署的新手，一个在自己电脑上运行的 AI 协作工作台。** 下载代码后可双击启动；不会配置时，把接入提示词交给自己的 AI，让它协助检查环境和接入。工作台本身没有第三方运行依赖，仍需要 Node.js、Git 和可用的 AI 通道；模型请求使用你自己的账号或 API Key，仍可能联网并产生费用。
 
 > A local, zero-dependency web workbench where you chat with **Codex CLI** and **Claude Code** in one group: they split work, hand off and review each other in isolated Git worktrees, and other AI agents can join through a one-command bridge. Windows-first, Node.js ≥ 22, no npm install.
