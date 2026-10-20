@@ -90,7 +90,7 @@ let showProcess = false;
 const running = t => ['starting', 'running', 'stopping'].includes(t.status);
 const touched = t => [t.finishedAt, t.startedAt, t.createdAt].filter(Boolean).sort().pop() || '';
 const channels = () => ['group', ...memberIds()];
-const avatar = who => `<div class="avatar ${/^ext-/.test(who) ? 'external' : who}">${who === 'user' ? '我' : who === 'codex' ? 'Cx' : who === 'claude' ? 'Cl' : who === 'group' ? '群' : label(who).slice(0,2)}</div>`;
+const avatar = who => `<div class="avatar ${/^ext-/.test(who) ? 'external' : who}">${who === 'user' ? '我' : who === 'codex' ? 'Cx' : who === 'claude' ? 'Cl' : who === 'group' ? (window.i18n.lang === 'en' ? 'G' : '群') : label(who).slice(0,2)}</div>`;
 function stripReport(s) { return String(s || '').replace(/```workbench\s*\n[\s\S]*?\n```/g, '').trim(); }
 function report(s) { const m = [...String(s || '').matchAll(/```workbench\s*\n([\s\S]*?)\n```/g)]; try { return m.length === 1 ? JSON.parse(m[0][1]) : null; } catch { return null; } }
 // 极简 Markdown：代码块、行内代码、粗体、链接；先转义再替换，不执行任何 HTML
@@ -123,8 +123,8 @@ function preview(ch) {
 }
 function memberState(k) {
   const x = state.providers[k];
+  if (x?.kind === 'external' && !x.online) return ['off', '离线 · 等待领取任务'];
   if (!x?.available) return ['off', '未连接'];
-  if (x.kind === 'external' && !x.online) return ['off', '离线 · 等待领取任务'];
   const busy = state.tasks.find(t => t.provider === k && running(t)), queued = state.tasks.find(t => t.provider === k && t.status === 'queued');
   if (busy) return ['busy', '在忙：' + busy.title];
   if (queued) return ['busy', '排队：' + queued.title];
@@ -225,6 +225,7 @@ async function refreshLive() {
   const el = document.querySelector(`[data-live="${t.id}"]`); if (el && el.textContent !== text) el.textContent = text;
 }
 function setView(v) { view = v; store.set('view', v); render(); }
+window.addEventListener('workbench-languagechange', () => { if (state) render(); });
 function openChannel(ch) { selectedChannel = ch; store.set('selectedChannel', ch); render(); $('#composer').elements.message.focus(); }
 $('#view-chat').onclick = () => setView('chat');
 $('#view-board').onclick = () => setView('board');

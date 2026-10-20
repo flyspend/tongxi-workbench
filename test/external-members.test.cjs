@@ -32,6 +32,18 @@ test('external identity stays project scoped, secrets are not exposed, mentions 
   const second = wb.project(p.id); const fakeProject = {...second,id:'other-project',name:'Other'}; wb.state.projects.push(fakeProject);
   assert.throws(() => wb.chat({projectId:fakeProject.id,to:a.id,message:'cross project'}));
 });
+test('automatic assignment skips offline external members, including the previous responder', async t => {
+  const {wb,p,a,b,send,claim}=await setup(t);
+  const first=send(a.id), lease=await claim(a,first);
+  wb.external.report({...lease,status:'complete',result:'First reply',validation:['Read README']});
+  wb.external.member(a.id).lastSeen=new Date(Date.now()-91000).toISOString();
+  assert.equal(wb.snapshot().providers[a.id].available,false, 'offline member must be unavailable');
+  assert.equal(wb.pickProvider(p.id),b.id);
+  const next=wb.chat({projectId:p.id,message:'Continue automatically'}).tasks[0];assert.equal(next.provider,b.id);
+  const explicit=wb.chat({projectId:p.id,to:a.id,message:'Wait for Gemini'}).tasks[0];assert.equal(explicit.provider,a.id);
+  wb.external.member(b.id).lastSeen=new Date(Date.now()-91000).toISOString();
+  const count=wb.state.tasks.length;assert.throws(()=>wb.chat({projectId:p.id,message:'Nobody is online'}),/No available AI/);assert.equal(wb.state.tasks.length,count);
+});
 test('external handoff preserves uncommitted code and waits for the sender', async t => {
   const {wb,p,a,b,send,claim,auth} = await setup(t); const task=send(a.id), lease=await claim(a,task);
   fs.writeFileSync(path.join(task.workspace,'answer.txt'),'uncommitted');

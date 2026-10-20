@@ -91,6 +91,7 @@ button.member:hover{background:#f0f2f8;filter:none}
 .member span{display:flex;flex-direction:column;min-width:0}.member b{font-size:12px;display:flex;gap:6px;align-items:center}.member small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
 .members .section-label{margin-top:16px}.members .section-label:first-child{margin-top:0}
 .members .section-label .link{font-size:11px}
+.members .section-label{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.members .section-label .link{flex-shrink:0;padding:2px 0;white-space:nowrap}
 .notice{font-size:12px;color:#5f6b82;line-height:1.7;white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin:0}
 .empty-chat{margin:auto;max-width:460px;text-align:center;color:#6c7891;line-height:1.9}.empty-chat h2{color:#243047;font-size:18px}
 @media(max-width:1200px){.members{display:none}}

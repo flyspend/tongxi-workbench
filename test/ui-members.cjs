@@ -19,6 +19,9 @@ async function main(){
   const p=wb.state.projects[0],m=wb.external.register({projectId:p.id,name:'Gemini'});
   const n=wb.external.register({projectId:p.id,name:'停止'});
   await page.locator(`#member-list [data-channel="${m.id}"]`).waitFor();
+  assert.equal(await page.locator('.channel .avatar.group').innerText(),'G');
+  assert.equal(await page.locator('#edit-notice').innerText(),'Edit');
+  assert.ok(await page.locator('#edit-notice').evaluate(el=>{const a=el.getBoundingClientRect(),b=el.parentElement.getBoundingClientRect();return el.scrollWidth<=el.clientWidth+1&&a.right<=b.right+1;}),'Edit link must fit within its heading');
   assert.equal(await page.locator(`#member-list [data-channel="${n.id}"] b`).innerText(),'停止');
   await page.locator('#composer [name=to]').selectOption(m.id);await page.locator('#composer [name=message]').fill('保持原文：只读');await page.getByRole('button',{name:'Send',exact:true}).click();
   await page.waitForFunction(id=>document.querySelector('#messages')?.textContent.includes('保持原文：只读'),m.id);
@@ -26,6 +29,7 @@ async function main(){
   wb.external.report({memberId:m.id,key:m.key,taskId:job.job.taskId,lease:job.lease,status:'complete',result:'用户报告：保持中文',validation:['Read README']});
   await page.getByText('用户报告：保持中文',{exact:true}).first().waitFor();
   await page.locator('#language').selectOption('zh');await page.getByRole('button',{name:'发送',exact:true}).waitFor();assert.equal(await page.locator('html').getAttribute('lang'),'zh-CN');
+  assert.equal(await page.locator('.channel .avatar.group').innerText(),'群');
   await page.locator('#language').selectOption('en');await page.getByRole('button',{name:'Send',exact:true}).waitFor();
   await page.goto(`http://127.0.0.1:${server.address().port}/`);await page.getByRole('button',{name:'Send',exact:true}).waitFor();
   await page.screenshot({path:path.join(__dirname,'..','ui-members-en.png'),fullPage:true});

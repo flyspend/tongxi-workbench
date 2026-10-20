@@ -154,8 +154,9 @@ class Workbench {
   project(id) { const p = this.state.projects.find(p => p.id === id); if (!p) throw new Error('项目不存在'); return p; }
   providerIds(projectId) { return [...PROVIDERS, ...this.state.externalMembers.filter(m => !m.retired && (!projectId || m.projectId === projectId)).map(m => m.id)]; }
   providerName(id) { return id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : this.external.member(id)?.name || id; }
+  providerAvailable(id) { return this.external.member(id) ? this.external.online(id) : !!this.executable(id); }
   executable(provider) { if (this.external.member(provider)?.retired) return null; if (this.external.member(provider)) return { kind: 'external', display: this.providerName(provider) }; return Object.hasOwn(this.options.providers || {}, provider) ? this.options.providers[provider] : detect(provider, this.state.settings[provider]); }
-  providers() { return Object.fromEntries(this.providerIds().map(k => { const x = this.executable(k); return [k, { available: !!x, kind: x?.kind || '', path: x?.display || x?.executable || '', configured: this.state.settings[k] || '', name: this.providerName(k), projectId: this.external.member(k)?.projectId, online: this.external.list().find(m => m.id === k)?.online }]; })); }
+  providers() { return Object.fromEntries(this.providerIds().map(k => { const x = this.executable(k); return [k, { available: this.providerAvailable(k), kind: x?.kind || '', path: x?.display || x?.executable || '', configured: this.state.settings[k] || '', name: this.providerName(k), projectId: this.external.member(k)?.projectId, online: this.external.member(k) ? this.external.online(k) : undefined }]; })); }
   snapshot() { const delivery = require('./deliverables.cjs'); return { ...this.state, externalMembers: this.external.list(), tasks: this.state.tasks.map(t => ({...t, artifacts: ['review','done'].includes(t.status) ? delivery.list(t) : []})), providers: this.providers() }; }
   async addProject(input) {
     let repo;
@@ -217,9 +218,9 @@ class Workbench {
   }
   // 选一位空闲且可用的 AI：用户不用关心该找谁
   pickProvider(projectId) {
-    const ready = this.providerIds(projectId).filter(k => this.executable(k));
+    const ready = this.providerIds(projectId).filter(k => this.providerAvailable(k));
     const idle = ready.filter(k => !this.state.tasks.some(t => t.provider === k && (active(t) || t.status === 'queued')));
-    return (idle.includes('claude') ? 'claude' : idle[0]) || (ready.includes('claude') ? 'claude' : ready[0]) || 'claude';
+    return (idle.includes('claude') ? 'claude' : idle[0]) || (ready.includes('claude') ? 'claude' : ready[0]) || null;
   }
   // 每个项目固定三个频道：群聊（用户 + Codex + Claude）和与两位 AI 的私信。一个频道 = 一个常驻任务组。
   channelFlow(p, channel) {
@@ -244,6 +245,7 @@ class Workbench {
       to = all ? 'all' : codex && claude ? 'both' : codex ? 'codex' : claude ? 'claude' : 'auto';
     }
     if (ids.includes(channel)) to = channel; // 私信只发给对方
+    if (to === 'auto' && !this.pickProvider(p.id)) throw new Error('没有在线成员；请先接入 AI，或指定离线成员排队 / No available AI; connect a member or select an offline member explicitly');
     const mode = input.mode === 'review' ? 'review' : 'edit';
     const title = message.split('\n').find(x => x.trim()).trim().slice(0, 60);
     let f = input.threadId ? this.relay.flow(input.threadId) : channel ? this.channelFlow(p, channel) : null;
@@ -258,7 +260,7 @@ class Workbench {
     const chatFlows = new Set(this.state.workflows.filter(x => x.projectId === p.id && (x.channel || x.id === f.id)).map(x => x.id));
     const last = this.state.tasks.find(t => chatFlows.has(t.workflowId) && (t.workspace || t.status === 'queued' || active(t)));
     const replier = members.find(t => t.result || active(t));
-    const providers = to === 'all' ? ids : to === 'both' ? PROVIDERS : [to === 'auto' ? replier?.provider || this.pickProvider(p.id) : to];
+    const providers = to === 'all' ? ids : to === 'both' ? PROVIDERS : [to === 'auto' ? replier && this.providerAvailable(replier.provider) ? replier.provider : this.pickProvider(p.id) : to];
     if (members.length + providers.length > f.maxTasks) f.maxTasks = members.length + 24;
     const tasks = providers.map(provider => {
       const t = this.createTask({ projectId: p.id, workflowId: f.id, provider, title, prompt: message, language: input.language, mode, scope: last?.scope || '' });

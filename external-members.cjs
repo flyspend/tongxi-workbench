@@ -8,7 +8,8 @@ class ExternalMembers {
     this.wb = wb; wb.state.externalMembers ||= []; this.leases = new Map(); this.claiming = new Set();
     this.timer = setInterval(() => this.expire(), 5000); this.timer.unref();
   }
-  list() { return this.wb.state.externalMembers.map(({ secretHash, ...m }) => ({ ...m, online: !m.retired && Date.now() - Date.parse(m.lastSeen) < 90000 })); }
+  online(id) { const m = this.member(id); return !!m && !m.retired && Date.now() - Date.parse(m.lastSeen) < 90000; }
+  list() { return this.wb.state.externalMembers.map(({ secretHash, ...m }) => ({ ...m, online: this.online(m.id) })); }
   member(id) { return this.wb.state.externalMembers.find(m => m.id === id); }
   register(input) {
     this.wb.project(input.projectId);

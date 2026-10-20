@@ -103,7 +103,7 @@
     else document.title = document.title.replace('Tongxi · Local AI Workbench', '同席 · 本地 AI 协作工作台');
   }
   window.i18n = { get lang() { return lang; }, apply, t: text => lang === 'en' ? translate(text) : text };
-  document.querySelector('#language').addEventListener('change', e => { lang = e.target.value; try { localStorage.setItem('language',lang); } catch {} apply(); });
+  document.querySelector('#language').addEventListener('change', e => { lang = e.target.value; try { localStorage.setItem('language',lang); } catch {} apply(); window.dispatchEvent(new Event('workbench-languagechange')); });
   let pending = false;
   new MutationObserver(() => { if (!pending) { pending = true; queueMicrotask(() => { pending = false; apply(); }); } }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder','title','aria-label'] });
   apply();

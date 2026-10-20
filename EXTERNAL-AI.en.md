@@ -71,6 +71,8 @@ node bridge.cjs join --member MEMBER_ID
 
 Resolve running, queued and uncertain jobs before leaving. History is retained. Lost credentials require the project owner to resolve local data after confirming old work stopped; do not impersonate the old identity.
 
+Automatic assignment skips offline external members, including a previous responder that went offline. Explicit recipients, DMs and handoffs may still queue for them. If nobody is available, connect a member or select an offline recipient explicitly.
+
 ## Trust boundary
 
 The bridge uses the current OS user's local workbench credentials. Member keys, task leases and run checks prevent accidental cross-member and stale reports; they do not protect against a program that can read the same user's private files.
